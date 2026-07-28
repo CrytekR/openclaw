@@ -24,7 +24,7 @@ describe("compaction notice trigger details", () => {
         },
       }),
     ).toBe(
-      "token budget: projected 176k = 160k base + 12k last-out + 4k prompt [fresh session] ≥ 176k",
+      "token budget: projected 176k = 160k base(fresh-session) + 12k last-out + 4k prompt ≥ 176k",
     );
     expect(
       formatCompactionNoticeText("start", {
@@ -39,7 +39,7 @@ describe("compaction notice trigger details", () => {
         },
       }),
     ).toBe(
-      "🧹 Compacting context (token budget: projected 181k = 170k base + 10k last-out + 500 prompt [transcript] ≥ 176k)...",
+      "🧹 Compacting context (token budget: projected 181k = 170k base(transcript) + 10k last-out + 500 prompt ≥ 176k)...",
     );
   });
 
@@ -78,7 +78,8 @@ describe("compaction notice trigger details", () => {
         lastOutputTokens: 2_000,
         promptEstimateTokens: 345,
       },
-      reasonText: "token budget: projected 12k = 10k base + 2k last-out + 345 prompt [transcript] ≥ 10k",
+      reasonText:
+        "token budget: projected 12k = 10k base(transcript) + 2k last-out + 345 prompt ≥ 10k",
     });
     expect(readCompactionTriggerDetails(data)).toEqual({
       trigger: "tokens",
@@ -122,7 +123,19 @@ describe("compaction notice trigger details", () => {
           promptEstimateTokens: 2_000,
         },
       }),
-    ).toBe("107k = 100k base + 5k last-out + 2k prompt [transcript]");
+    ).toBe("107k = 100k base(transcript) + 5k last-out + 2k prompt");
+  });
+
+  it("labels base-only projections with the base source type", () => {
+    expect(
+      formatProjectedTokenExpression({
+        projectedTokens: 160_000,
+        breakdown: {
+          source: "fresh_persisted",
+          baseTokens: 160_000,
+        },
+      }),
+    ).toBe("160k (160k base(fresh-session))");
   });
 
   it("keeps legacy notice text when no details are provided", () => {

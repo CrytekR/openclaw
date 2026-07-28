@@ -1255,7 +1255,7 @@ function resolveCompactionStatusReason(status: CompactionStatus): string | null 
           breakdown.source === "transcript_usage"
             ? "transcript"
             : breakdown.source === "fresh_persisted"
-              ? "fresh session"
+              ? "fresh-session"
               : "persisted";
         const base = formatCompactTokenCount(breakdown.baseTokens);
         const lastOutput =
@@ -1266,17 +1266,18 @@ function resolveCompactionStatusReason(status: CompactionStatus): string | null 
           typeof breakdown.promptEstimateTokens === "number" && breakdown.promptEstimateTokens > 0
             ? formatCompactTokenCount(breakdown.promptEstimateTokens)
             : undefined;
+        const baseTerm = `${base} base(${source})`;
         if (!lastOutput && !promptEstimate) {
-          return `${projected} (${source} ${base})`;
+          return `${projected} (${baseTerm})`;
         }
-        const parts = [`${base} base`];
+        const parts = [baseTerm];
         if (lastOutput) {
           parts.push(`${lastOutput} last-out`);
         }
         if (promptEstimate) {
           parts.push(`${promptEstimate} prompt`);
         }
-        return `${projected} = ${parts.join(" + ")} [${source}]`;
+        return `${projected} = ${parts.join(" + ")}`;
       })();
       if (typeof status.threshold === "number" && status.threshold > 0) {
         return `token budget: projected ${projectedExpr} ≥ ${formatCompactTokenCount(status.threshold)}`;

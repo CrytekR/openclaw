@@ -137,7 +137,7 @@ function resolveProjectedTokenSourceLabel(source: ProjectedTokenSource): string 
     case "transcript_usage":
       return "transcript";
     case "fresh_persisted":
-      return "fresh session";
+      return "fresh-session";
     case "persisted":
       return "persisted";
   }
@@ -265,17 +265,20 @@ export function formatProjectedTokenExpression(params: {
     typeof breakdown.promptEstimateTokens === "number" && breakdown.promptEstimateTokens > 0
       ? formatCompactTokenCount(breakdown.promptEstimateTokens)
       : undefined;
+  // Keep the base source on the base term so operators can tell why it may
+  // differ from the Control UI context meter (session totalTokens snapshot).
+  const baseTerm = `${base} base(${source})`;
   if (!lastOutput && !promptEstimate) {
-    return `${projected} (${source} ${base})`;
+    return `${projected} (${baseTerm})`;
   }
-  const parts = [`${base} base`];
+  const parts = [baseTerm];
   if (lastOutput) {
     parts.push(`${lastOutput} last-out`);
   }
   if (promptEstimate) {
     parts.push(`${promptEstimate} prompt`);
   }
-  return `${projected} = ${parts.join(" + ")} [${source}]`;
+  return `${projected} = ${parts.join(" + ")}`;
 }
 
 function readProjectedTokenBreakdown(value: unknown): ProjectedTokenBreakdown | undefined {
