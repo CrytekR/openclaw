@@ -338,6 +338,16 @@ export type CompactionStatus = {
   runId: string | null;
   startedAt: number | null;
   completedAt: number | null;
+  /** Specific compaction trigger when the gateway provided one. */
+  trigger?: "tokens" | "transcript_bytes" | "overflow" | "manual" | "threshold" | "budget" | null;
+  /** Session-level reason when provided. */
+  reason?: "manual" | "threshold" | "overflow" | null;
+  /** Preformatted reason text from the gateway when available. */
+  reasonText?: string | null;
+  /** Projected next-turn tokens for token-budget triggers. */
+  projectedTokens?: number | null;
+  /** Token-budget threshold when provided. */
+  threshold?: number | null;
 };
 
 export type FallbackStatus = {
@@ -459,6 +469,102 @@ const COMPACTION_TOAST_DURATION_MS = 5000;
 const COMPACTION_ACTIVE_STALE_TIMEOUT_MS = 5 * 60_000;
 const FALLBACK_TOAST_DURATION_MS = 8000;
 
+type CompactionStatusDetails = Partial<
+  Pick<CompactionStatus, "trigger" | "reason" | "reasonText" | "projectedTokens" | "threshold">
+>;
+
+function compactionTriggerSpecificity(trigger: CompactionStatus["trigger"] | undefined): number {
+  switch (trigger) {
+    case "tokens":
+    case "transcript_bytes":
+    case "overflow":
+    case "manual":
+      return 2;
+    case "threshold":
+    case "budget":
+      return 1;
+    default:
+      return 0;
+  }
+}
+
+function readCompactionStatusDetails(data: Record<string, unknown>): CompactionStatusDetails {
+  const triggerRaw = typeof data.trigger === "string" ? data.trigger : undefined;
+  const reasonRaw = typeof data.reason === "string" ? data.reason : undefined;
+  const trigger =
+    triggerRaw === "tokens" ||
+    triggerRaw === "transcript_bytes" ||
+    triggerRaw === "overflow" ||
+    triggerRaw === "manual" ||
+    triggerRaw === "threshold" ||
+    triggerRaw === "budget"
+      ? triggerRaw
+      : undefined;
+  const reason =
+    reasonRaw === "manual" || reasonRaw === "threshold" || reasonRaw === "overflow"
+      ? reasonRaw
+      : undefined;
+  const reasonText =
+    typeof data.reasonText === "string" ? data.reasonText.trim() || undefined : undefined;
+  const projectedTokens =
+    typeof data.projectedTokens === "number" && Number.isFinite(data.projectedTokens)
+      ? Math.floor(data.projectedTokens)
+      : undefined;
+  const threshold =
+    typeof data.threshold === "number" && Number.isFinite(data.threshold)
+      ? Math.floor(data.threshold)
+      : undefined;
+  return {
+    ...(trigger ? { trigger } : {}),
+    ...(reason ? { reason } : {}),
+    ...(reasonText ? { reasonText } : {}),
+    ...(projectedTokens !== undefined ? { projectedTokens } : {}),
+    ...(threshold !== undefined ? { threshold } : {}),
+  };
+}
+
+/**
+ * Preflight emits specific token/bytes triggers; later embedded session events
+ * often only carry generic threshold/budget. Keep the richer details so the UI
+ * does not lose projectedTokens mid-compaction.
+ */
+function mergeCompactionStatusDetails(
+  previous: CompactionStatusDetails | null | undefined,
+  incoming: CompactionStatusDetails,
+): CompactionStatusDetails {
+  const previousTrigger = previous?.trigger ?? undefined;
+  const incomingTrigger = incoming.trigger ?? undefined;
+  const keepPreviousTrigger =
+    compactionTriggerSpecificity(previousTrigger) > compactionTriggerSpecificity(incomingTrigger);
+  const trigger = keepPreviousTrigger ? previousTrigger : (incomingTrigger ?? previousTrigger);
+  const reason = incoming.reason ?? previous?.reason ?? undefined;
+  const projectedTokens =
+    typeof incoming.projectedTokens === "number"
+      ? incoming.projectedTokens
+      : typeof previous?.projectedTokens === "number"
+        ? previous.projectedTokens
+        : undefined;
+  const threshold =
+    typeof incoming.threshold === "number"
+      ? incoming.threshold
+      : typeof previous?.threshold === "number"
+        ? previous.threshold
+        : undefined;
+  const incomingReasonText = incoming.reasonText?.trim() || undefined;
+  const previousReasonText = previous?.reasonText?.trim() || undefined;
+  const reasonText =
+    keepPreviousTrigger && previousReasonText
+      ? previousReasonText
+      : (incomingReasonText ?? previousReasonText);
+  return {
+    ...(trigger ? { trigger } : {}),
+    ...(reason ? { reason } : {}),
+    ...(reasonText ? { reasonText } : {}),
+    ...(projectedTokens !== undefined ? { projectedTokens } : {}),
+    ...(threshold !== undefined ? { threshold } : {}),
+  };
+}
+
 function clearCompactionTimer(host: CompactionHost) {
   if (host.compactionClearTimer != null) {
     window.clearTimeout(host.compactionClearTimer);
@@ -486,11 +592,13 @@ function scheduleCompactionClear(
 }
 
 function setCompactionComplete(host: CompactionHost, runId: string) {
+  const details = mergeCompactionStatusDetails(host.compactionStatus, {});
   host.compactionStatus = {
     phase: "complete",
     runId,
     startedAt: host.compactionStatus?.startedAt ?? null,
     completedAt: Date.now(),
+    ...details,
   };
   scheduleCompactionClear(host, COMPACTION_TOAST_DURATION_MS, { phase: "complete", runId });
 }
@@ -547,6 +655,10 @@ function handleCompactionEvent(host: CompactionHost, payload: AgentEventPayload)
   const data = payload.data ?? {};
   const phase = typeof data.phase === "string" ? data.phase : "";
   const completed = data.completed === true;
+  const details = mergeCompactionStatusDetails(
+    host.compactionStatus,
+    readCompactionStatusDetails(data),
+  );
 
   clearCompactionTimer(host);
 
@@ -554,8 +666,12 @@ function handleCompactionEvent(host: CompactionHost, payload: AgentEventPayload)
     host.compactionStatus = {
       phase: "active",
       runId: payload.runId,
-      startedAt: Date.now(),
+      startedAt:
+        host.compactionStatus?.phase === "active" || host.compactionStatus?.phase === "retrying"
+          ? (host.compactionStatus.startedAt ?? Date.now())
+          : Date.now(),
       completedAt: null,
+      ...details,
     };
     scheduleCompactionClear(host, COMPACTION_ACTIVE_STALE_TIMEOUT_MS, {
       phase: "active",
@@ -572,6 +688,7 @@ function handleCompactionEvent(host: CompactionHost, payload: AgentEventPayload)
         runId: payload.runId,
         startedAt: host.compactionStatus?.startedAt ?? Date.now(),
         completedAt: null,
+        ...details,
       };
       scheduleCompactionClear(host, COMPACTION_ACTIVE_STALE_TIMEOUT_MS, {
         phase: "retrying",
@@ -580,7 +697,17 @@ function handleCompactionEvent(host: CompactionHost, payload: AgentEventPayload)
       return;
     }
     if (completed) {
-      setCompactionComplete(host, payload.runId);
+      host.compactionStatus = {
+        phase: "complete",
+        runId: payload.runId,
+        startedAt: host.compactionStatus?.startedAt ?? null,
+        completedAt: Date.now(),
+        ...details,
+      };
+      scheduleCompactionClear(host, COMPACTION_TOAST_DURATION_MS, {
+        phase: "complete",
+        runId: payload.runId,
+      });
       return;
     }
     host.compactionStatus = null;

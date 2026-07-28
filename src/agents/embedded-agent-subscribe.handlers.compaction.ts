@@ -44,6 +44,25 @@ function compactionLogKind(reason: CompactionReason): string {
   return reason === "manual" ? "manual compaction" : "auto-compaction";
 }
 
+function buildCompactionEventData(
+  phase: "start" | "end",
+  reason: CompactionReason,
+  extras?: Record<string, unknown>,
+): Record<string, unknown> {
+  return {
+    phase,
+    reason,
+    trigger: reason,
+    reasonText:
+      reason === "overflow"
+        ? "context overflow"
+        : reason === "manual"
+          ? "manual"
+          : "context threshold",
+    ...extras,
+  };
+}
+
 /** Handles compaction start events from an embedded agent session. */
 export function handleCompactionStart(
   ctx: EmbeddedAgentSubscribeContext,
@@ -60,10 +79,11 @@ export function handleCompactionStart(
     reason,
     consoleMessage: `embedded run ${kind} start: runId=${ctx.params.runId} reason=${reason}`,
   });
+  const startData = buildCompactionEventData("start", reason);
   emitAgentEvent({
     runId: ctx.params.runId,
     stream: "compaction",
-    data: { phase: "start" },
+    data: startData,
   });
   runBestEffortCallback({
     label: "compaction agent event",
@@ -71,7 +91,7 @@ export function handleCompactionStart(
     callback: () =>
       ctx.params.onAgentEvent?.({
         stream: "compaction",
-        data: { phase: "start" },
+        data: startData,
       }),
   });
 
@@ -161,10 +181,14 @@ export function handleCompactionEnd(ctx: EmbeddedAgentSubscribeContext, evt: Com
       consoleMessage: `embedded run ${kind} incomplete: runId=${ctx.params.runId} reason=${reason} aborted=${wasAborted} willRetry=${willRetry}`,
     });
   }
+  const endData = buildCompactionEventData("end", reason, {
+    willRetry,
+    completed: hasResult && !wasAborted,
+  });
   emitAgentEvent({
     runId: ctx.params.runId,
     stream: "compaction",
-    data: { phase: "end", willRetry, completed: hasResult && !wasAborted },
+    data: endData,
   });
   runBestEffortCallback({
     label: "compaction agent event",
@@ -172,7 +196,7 @@ export function handleCompactionEnd(ctx: EmbeddedAgentSubscribeContext, evt: Com
     callback: () =>
       ctx.params.onAgentEvent?.({
         stream: "compaction",
-        data: { phase: "end", willRetry, completed: hasResult && !wasAborted },
+        data: endData,
       }),
   });
 

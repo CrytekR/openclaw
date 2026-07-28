@@ -795,6 +795,11 @@ describe("renderChatComposer status", () => {
         runId: "run-1",
         startedAt: 1_000,
         completedAt: null,
+        trigger: "tokens",
+        reason: "threshold",
+        reasonText: "token budget: projected 176k ≥ 176k",
+        projectedTokens: 176_000,
+        threshold: 176_000,
       },
       fallbackStatus: {
         selected: "fireworks/minimax-m2p5",
@@ -804,7 +809,7 @@ describe("renderChatComposer status", () => {
       },
     });
     expect(container.querySelector(".compaction-indicator--active")?.textContent?.trim()).toBe(
-      "Compacting context...",
+      "Compacting context (token budget: projected 176k ≥ 176k)...",
     );
     expect(container.querySelector(".compaction-indicator--fallback")?.textContent?.trim()).toBe(
       "Fallback active: deepinfra/moonshotai/Kimi-K2.5",

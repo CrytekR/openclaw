@@ -1335,8 +1335,31 @@ describe("runMemoryFlushIfNeeded", () => {
       modelSelectionLocked: true,
     });
     expect(incrementCompactionCountMock).not.toHaveBeenCalled();
-    expect(onCompactionNotice).toHaveBeenNthCalledWith(1, "start");
-    expect(onCompactionNotice).toHaveBeenNthCalledWith(2, "skipped");
+    expect(onCompactionNotice).toHaveBeenNthCalledWith(
+      1,
+      "start",
+      expect.objectContaining({
+        trigger: "tokens",
+        projectedTokens: expect.any(Number),
+        threshold: expect.any(Number),
+      }),
+    );
+    expect(onCompactionNotice).toHaveBeenNthCalledWith(
+      2,
+      "skipped",
+      expect.objectContaining({ trigger: "tokens" }),
+    );
+    expect(emitAgentEventMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        stream: "compaction",
+        data: expect.objectContaining({
+          phase: "start",
+          trigger: "tokens",
+          projectedTokens: expect.any(Number),
+          reasonText: expect.stringContaining("projected"),
+        }),
+      }),
+    );
   });
 
   it("fails when required preflight context-engine compaction is deferred to background maintenance", async () => {
@@ -2687,8 +2710,16 @@ describe("runMemoryFlushIfNeeded", () => {
       onCompactionNotice,
     });
 
-    expect(onCompactionNotice).toHaveBeenNthCalledWith(1, "start");
-    expect(onCompactionNotice).toHaveBeenNthCalledWith(2, "end");
+    expect(onCompactionNotice).toHaveBeenNthCalledWith(
+      1,
+      "start",
+      expect.objectContaining({ trigger: expect.any(String) }),
+    );
+    expect(onCompactionNotice).toHaveBeenNthCalledWith(
+      2,
+      "end",
+      expect.objectContaining({ trigger: expect.any(String) }),
+    );
   });
 
   it("emits an incomplete preflight compaction notice when post-compaction state update throws", async () => {
@@ -2739,8 +2770,16 @@ describe("runMemoryFlushIfNeeded", () => {
       }),
     ).rejects.toThrow("count update failed");
 
-    expect(onCompactionNotice).toHaveBeenNthCalledWith(1, "start");
-    expect(onCompactionNotice).toHaveBeenNthCalledWith(2, "incomplete");
+    expect(onCompactionNotice).toHaveBeenNthCalledWith(
+      1,
+      "start",
+      expect.objectContaining({ trigger: expect.any(String) }),
+    );
+    expect(onCompactionNotice).toHaveBeenNthCalledWith(
+      2,
+      "incomplete",
+      expect.objectContaining({ trigger: expect.any(String) }),
+    );
   });
 
   it("keeps the active transcript byte threshold inactive unless transcript rotation is enabled", async () => {

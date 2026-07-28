@@ -1239,31 +1239,68 @@ function renderChatRunStatusIndicator(status: ComposerRunStatus | null | undefin
   `;
 }
 
+function resolveCompactionStatusReason(status: CompactionStatus): string | null {
+  if (status.reasonText?.trim()) {
+    return status.reasonText.trim();
+  }
+  if (status.trigger === "tokens") {
+    if (typeof status.projectedTokens === "number" && status.projectedTokens > 0) {
+      const projected = formatCompactTokenCount(status.projectedTokens);
+      if (typeof status.threshold === "number" && status.threshold > 0) {
+        return `token budget: projected ${projected} ≥ ${formatCompactTokenCount(status.threshold)}`;
+      }
+      return `token budget: projected ${projected}`;
+    }
+    return "token budget";
+  }
+  if (status.trigger === "transcript_bytes") {
+    return "transcript size limit";
+  }
+  if (status.trigger === "overflow" || status.reason === "overflow") {
+    return "context overflow";
+  }
+  if (status.trigger === "manual" || status.reason === "manual") {
+    return "manual";
+  }
+  if (status.trigger === "threshold" || status.reason === "threshold") {
+    return "context threshold";
+  }
+  if (status.trigger === "budget") {
+    return "context budget";
+  }
+  return null;
+}
+
 function renderCompactionIndicator(status: CompactionStatus | null | undefined) {
   if (!status) {
     return nothing;
   }
+  const reason = resolveCompactionStatusReason(status);
   if (status.phase === "active" || status.phase === "retrying") {
+    const message = reason ? `Compacting context (${reason})...` : "Compacting context...";
     return html`
       <div
         class="compaction-indicator compaction-indicator--active"
         role="status"
         aria-live="polite"
+        title=${ifDefined(reason ?? undefined)}
       >
-        ${icons.loader} Compacting context...
+        ${icons.loader} ${message}
       </div>
     `;
   }
   if (status.completedAt) {
     const elapsed = Date.now() - status.completedAt;
     if (elapsed < COMPACTION_TOAST_DURATION_MS) {
+      const message = reason ? `Context compacted (${reason})` : "Context compacted";
       return html`
         <div
           class="compaction-indicator compaction-indicator--complete"
           role="status"
           aria-live="polite"
+          title=${ifDefined(reason ?? undefined)}
         >
-          ${icons.check} Context compacted
+          ${icons.check} ${message}
         </div>
       `;
     }

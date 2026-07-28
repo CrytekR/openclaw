@@ -91,8 +91,10 @@ import {
   createCompactionHookNoticePayload,
   createCompactionNoticePayload,
   readCompactionHookMessages,
+  readCompactionTriggerDetails,
   shouldNotifyUserAboutCompaction,
   type CompactionNoticePhase,
+  type CompactionTriggerDetails,
 } from "./compaction-notice.js";
 import { resolveFollowupDeliveryPayloads } from "./followup-delivery.js";
 import { type InternalGetReplyOptions, shouldBridgeCliPreambleEvents } from "./get-reply.types.js";
@@ -333,6 +335,7 @@ async function forwardFollowupProgressEvent(params: {
         await params.onCompactionNoticePayload?.(
           createCompactionNoticePayload({
             phase: noticePhase,
+            details: readCompactionTriggerDetails(evt.data ?? {}),
             currentMessageId: params.currentMessageId,
           }),
         );
@@ -792,10 +795,11 @@ export function createFollowupRunner(params: {
         });
       };
       const notifyPreflightCompaction = shouldNotifyUserAboutCompaction(runtimeConfig)
-        ? async (phase: CompactionNoticePhase) => {
+        ? async (phase: CompactionNoticePhase, details?: CompactionTriggerDetails) => {
             await sendCompactionNoticePayload(
               createCompactionNoticePayload({
                 phase,
+                details,
                 currentMessageId: compactionNoticeReplyToId,
               }),
             );
@@ -827,6 +831,7 @@ export function createFollowupRunner(params: {
           storePath,
           isHeartbeat: opts?.isHeartbeat === true,
           replyOperation,
+          runId,
           onCompactionNotice: notifyPreflightCompaction,
         });
         preflightCompactionApplied =

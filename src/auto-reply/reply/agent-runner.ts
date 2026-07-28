@@ -123,6 +123,7 @@ import {
   createCompactionNoticePayload,
   shouldNotifyUserAboutCompaction,
   type CompactionNoticePhase,
+  type CompactionTriggerDetails,
 } from "./compaction-notice.js";
 import { resolveEffectiveReplyRoute } from "./effective-reply-route.js";
 import { createFollowupRunner } from "./followup-runner.js";
@@ -1582,12 +1583,13 @@ export async function runReplyAgent(params: {
   });
   const compactionNoticeMessageId = sessionCtx.MessageSidFull ?? sessionCtx.MessageSid;
   const sendDirectCompactionNotice = shouldNotifyUserAboutCompaction(cfg)
-    ? async (phase: CompactionNoticePhase) => {
+    ? async (phase: CompactionNoticePhase, details?: CompactionTriggerDetails) => {
         if (!opts?.onBlockReply) {
           return;
         }
         const noticePayload = createCompactionNoticePayload({
           phase,
+          details,
           currentMessageId: compactionNoticeMessageId,
           applyReplyToMode,
         });
