@@ -13,6 +13,7 @@ import {
   createCompactionNoticePayload,
   formatCompactionModelRef,
   readCompactionHookMessages,
+  readCompactionTriggerDetails,
 } from "./compaction-notice.js";
 
 const agentCompactionLog = createSubsystemLogger("auto-reply/compaction");
@@ -60,10 +61,14 @@ export function createAgentRunEventHandler(params: {
       logVerbose(`compaction ${label} notice delivery failed (non-fatal): ${String(err)}`);
     }
   };
-  const sendCompactionNotice = async (phase: "start" | "end" | "incomplete") => {
+  const sendCompactionNotice = async (
+    phase: "start" | "end" | "incomplete",
+    data?: Record<string, unknown>,
+  ) => {
     await deliverCompactionNoticePayload(
       createCompactionNoticePayload({
         phase,
+        details: data ? readCompactionTriggerDetails(data) : undefined,
         currentMessageId,
         applyReplyToMode: params.turn.applyReplyToMode,
       }),
@@ -272,7 +277,7 @@ export function createAgentRunEventHandler(params: {
         await sendCompactionHookMessages(hookMessages);
       }
       if (params.notifyUserAboutCompaction) {
-        await sendCompactionNotice(noticePhase);
+        await sendCompactionNotice(noticePhase, evt.data ?? {});
       }
     };
     if (phase === "start") {

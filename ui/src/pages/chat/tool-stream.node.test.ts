@@ -834,6 +834,71 @@ describe("app-tool-stream fallback lifecycle handling", () => {
     vi.useRealTimers();
   });
 
+  it("preserves preflight token-budget details across generic threshold events", () => {
+    useToolStreamFakeTimers();
+    const host = createHost();
+
+    handleAgentEvent(
+      host,
+      agentEvent("preflight-compaction:main", 1, "compaction", {
+        phase: "start",
+        trigger: "tokens",
+        reason: "threshold",
+        projectedTokens: 176_000,
+        threshold: 176_000,
+        reasonText: "token budget: projected 176k ≥ 176k",
+      }),
+    );
+
+    expect(host.compactionStatus).toMatchObject({
+      phase: "active",
+      trigger: "tokens",
+      projectedTokens: 176_000,
+      threshold: 176_000,
+      reasonText: "token budget: projected 176k ≥ 176k",
+    });
+
+    handleAgentEvent(
+      host,
+      agentEvent("run-1", 2, "compaction", {
+        phase: "start",
+        reason: "threshold",
+        trigger: "threshold",
+        reasonText: "context threshold",
+      }),
+    );
+
+    expect(host.compactionStatus).toMatchObject({
+      phase: "active",
+      runId: "run-1",
+      trigger: "tokens",
+      projectedTokens: 176_000,
+      threshold: 176_000,
+      reasonText: "token budget: projected 176k ≥ 176k",
+    });
+
+    handleAgentEvent(
+      host,
+      agentEvent("run-1", 3, "compaction", {
+        phase: "end",
+        completed: true,
+        reason: "threshold",
+        trigger: "threshold",
+        reasonText: "context threshold",
+      }),
+    );
+
+    expect(host.compactionStatus).toMatchObject({
+      phase: "complete",
+      runId: "run-1",
+      trigger: "tokens",
+      projectedTokens: 176_000,
+      reasonText: "token budget: projected 176k ≥ 176k",
+    });
+
+    vi.useRealTimers();
+  });
+
   it("auto-clears active compaction after the stale timeout", () => {
     useToolStreamFakeTimers();
     const host = createHost();

@@ -2,6 +2,7 @@ import { isContextOverflow } from "@openclaw/ai/internal/runtime";
 import { truncateUtf16Safe } from "@openclaw/normalization-core/utf16-slice";
 import { buildContextEngineRuntimeSettings } from "../../../context-engine/runtime-settings.js";
 import type { ContextEngine, ContextEngineSessionTarget } from "../../../context-engine/types.js";
+import { emitAgentEvent } from "../../../infra/agent-events.js";
 import { formatErrorMessage } from "../../../infra/errors.js";
 import type { AssistantMessage } from "../../../llm/types.js";
 import { resolveProcessToolScopeKey } from "../../agent-tools.js";
@@ -205,6 +206,24 @@ export async function recoverEmbeddedRunOverflow(input: {
     log.warn(
       `context overflow detected (attempt ${input.state.overflowCompactionAttempts}/${MAX_OVERFLOW_COMPACTION_ATTEMPTS}); attempting auto-compaction for ${input.provider}/${input.modelId}`,
     );
+    const overflowEventData = {
+      phase: "start" as const,
+      reason: "overflow" as const,
+      trigger: "overflow" as const,
+      reasonText: "context overflow",
+      ...(typeof overflowTokenCountForCompaction === "number"
+        ? { projectedTokens: overflowTokenCountForCompaction }
+        : {}),
+      ...(typeof input.contextTokenBudget === "number"
+        ? { threshold: input.contextTokenBudget }
+        : {}),
+    };
+    emitAgentEvent({
+      runId: runParams.runId,
+      stream: "compaction",
+      data: overflowEventData,
+      ...(runParams.sessionKey ? { sessionKey: runParams.sessionKey } : {}),
+    });
     let compactResult: CompactResult;
     let previousSessionId: string | undefined;
     await input.runOwnsCompactionBeforeHook("overflow recovery");
@@ -319,6 +338,26 @@ export async function recoverEmbeddedRunOverflow(input: {
       compactResult = { ok: false, compacted: false, reason: String(compactErr) };
     }
     await input.runOwnsCompactionAfterHook("overflow recovery", compactResult, previousSessionId);
+
+    emitAgentEvent({
+      runId: runParams.runId,
+      stream: "compaction",
+      data: {
+        phase: "end",
+        reason: "overflow",
+        trigger: "overflow",
+        reasonText: "context overflow",
+        completed: Boolean(compactResult.ok && compactResult.compacted),
+        willRetry: Boolean(compactResult.ok && compactResult.compacted),
+        ...(typeof overflowTokenCountForCompaction === "number"
+          ? { projectedTokens: overflowTokenCountForCompaction }
+          : {}),
+        ...(typeof input.contextTokenBudget === "number"
+          ? { threshold: input.contextTokenBudget }
+          : {}),
+      },
+      ...(runParams.sessionKey ? { sessionKey: runParams.sessionKey } : {}),
+    });
 
     if (preflightRecovery && isNoRealConversationCompactionNoop(compactResult)) {
       input.state.lastCompactionTokensAfter = undefined;
