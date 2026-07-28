@@ -1356,6 +1356,10 @@ describe("runMemoryFlushIfNeeded", () => {
           phase: "start",
           trigger: "tokens",
           projectedTokens: expect.any(Number),
+          projectedBreakdown: expect.objectContaining({
+            source: expect.stringMatching(/^(transcript_usage|fresh_persisted|persisted)$/),
+            baseTokens: expect.any(Number),
+          }),
           reasonText: expect.stringContaining("projected"),
         }),
       }),

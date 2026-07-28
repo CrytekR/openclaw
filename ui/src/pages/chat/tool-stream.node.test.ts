@@ -846,7 +846,14 @@ describe("app-tool-stream fallback lifecycle handling", () => {
         reason: "threshold",
         projectedTokens: 176_000,
         threshold: 176_000,
-        reasonText: "token budget: projected 176k ≥ 176k",
+        projectedBreakdown: {
+          source: "fresh_persisted",
+          baseTokens: 160_000,
+          lastOutputTokens: 12_000,
+          promptEstimateTokens: 4_000,
+        },
+        reasonText:
+          "token budget: projected 176k = 160k base + 12k last-out + 4k prompt [fresh session] ≥ 176k",
       }),
     );
 
@@ -855,7 +862,14 @@ describe("app-tool-stream fallback lifecycle handling", () => {
       trigger: "tokens",
       projectedTokens: 176_000,
       threshold: 176_000,
-      reasonText: "token budget: projected 176k ≥ 176k",
+      projectedBreakdown: {
+        source: "fresh_persisted",
+        baseTokens: 160_000,
+        lastOutputTokens: 12_000,
+        promptEstimateTokens: 4_000,
+      },
+      reasonText:
+        "token budget: projected 176k = 160k base + 12k last-out + 4k prompt [fresh session] ≥ 176k",
     });
 
     handleAgentEvent(
@@ -874,7 +888,14 @@ describe("app-tool-stream fallback lifecycle handling", () => {
       trigger: "tokens",
       projectedTokens: 176_000,
       threshold: 176_000,
-      reasonText: "token budget: projected 176k ≥ 176k",
+      projectedBreakdown: {
+        source: "fresh_persisted",
+        baseTokens: 160_000,
+        lastOutputTokens: 12_000,
+        promptEstimateTokens: 4_000,
+      },
+      reasonText:
+        "token budget: projected 176k = 160k base + 12k last-out + 4k prompt [fresh session] ≥ 176k",
     });
 
     handleAgentEvent(
@@ -893,7 +914,14 @@ describe("app-tool-stream fallback lifecycle handling", () => {
       runId: "run-1",
       trigger: "tokens",
       projectedTokens: 176_000,
-      reasonText: "token budget: projected 176k ≥ 176k",
+      projectedBreakdown: {
+        source: "fresh_persisted",
+        baseTokens: 160_000,
+        lastOutputTokens: 12_000,
+        promptEstimateTokens: 4_000,
+      },
+      reasonText:
+        "token budget: projected 176k = 160k base + 12k last-out + 4k prompt [fresh session] ≥ 176k",
     });
 
     vi.useRealTimers();

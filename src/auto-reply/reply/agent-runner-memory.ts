@@ -63,6 +63,8 @@ import {
 } from "./agent-runner-utils.js";
 import {
   buildCompactionAgentEventData,
+  resolveEffectivePromptTokens,
+  resolveProjectedTokenProjection,
   type CompactionNoticePhase,
   type CompactionTriggerDetails,
 } from "./compaction-notice.js";
@@ -208,19 +210,6 @@ function estimatePromptTokensForMemoryFlush(prompt?: string): number | undefined
     return undefined;
   }
   return Math.ceil(tokens);
-}
-
-function resolveEffectivePromptTokens(
-  basePromptTokens?: number,
-  lastOutputTokens?: number,
-  promptTokenEstimate?: number,
-): number {
-  const base = Math.max(0, basePromptTokens ?? 0);
-  const output = Math.max(0, lastOutputTokens ?? 0);
-  const estimate = Math.max(0, promptTokenEstimate ?? 0);
-  // Flush gating projects the next input context by adding the previous
-  // completion and the current user prompt estimate.
-  return base + output + estimate;
 }
 
 function isPreflightCompactionSkipReason(reason?: string): boolean {
@@ -876,31 +865,14 @@ export async function runPreflightCompactionIfNeeded(params: {
       : undefined;
   const transcriptPromptTokens = transcriptUsageTokens?.promptTokens;
   const transcriptOutputTokens = transcriptUsageTokens?.outputTokens;
-  const usageProjectedTokenCount =
-    typeof transcriptPromptTokens === "number"
-      ? resolveEffectivePromptTokens(
-          transcriptPromptTokens,
-          transcriptOutputTokens,
-          promptTokenEstimate,
-        )
-      : undefined;
-  const freshProjectedTokenCount =
-    typeof freshPersistedTokens === "number"
-      ? resolveEffectivePromptTokens(
-          freshPersistedTokens,
-          transcriptOutputTokens,
-          promptTokenEstimate,
-        )
-      : undefined;
-  const projectedTokenCount = Math.max(
-    usageProjectedTokenCount ?? 0,
-    freshProjectedTokenCount ?? 0,
-    stalePersistedPromptTokens ?? 0,
-  );
-  const tokenCountForCompaction =
-    Number.isFinite(projectedTokenCount) && projectedTokenCount > 0
-      ? projectedTokenCount
-      : undefined;
+  const projectedProjection = resolveProjectedTokenProjection({
+    transcriptPromptTokens,
+    transcriptOutputTokens,
+    freshPersistedTokens,
+    persistedPromptTokens: stalePersistedPromptTokens,
+    promptEstimateTokens: promptTokenEstimate,
+  });
+  const tokenCountForCompaction = projectedProjection?.projectedTokens;
 
   logVerbose(
     `preflightCompaction check: sessionKey=${params.sessionKey} ` +
@@ -935,6 +907,9 @@ export async function runPreflightCompactionIfNeeded(params: {
     reason: "threshold",
     ...(typeof tokenCountForCompaction === "number"
       ? { projectedTokens: tokenCountForCompaction }
+      : {}),
+    ...(projectedProjection?.breakdown
+      ? { projectedBreakdown: projectedProjection.breakdown }
       : {}),
     ...(threshold > 0 ? { threshold } : {}),
     ...(typeof activeTranscriptBytes === "number" ? { activeTranscriptBytes } : {}),

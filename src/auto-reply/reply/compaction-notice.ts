@@ -11,6 +11,25 @@ export type CompactionNoticePhase =
   | "skipped"
   | "memory_flush_degraded";
 
+/**
+ * Which candidate won the preflight projected-token max().
+ * - transcript_usage: transcript usage/estimate base + last output + prompt estimate
+ * - fresh_persisted: session totalTokensFresh base + last output + prompt estimate
+ * - persisted: raw persisted totalTokens floor (no additive terms)
+ */
+export type ProjectedTokenSource = "transcript_usage" | "fresh_persisted" | "persisted";
+
+/** Additive terms that produced the winning projected-token count. */
+export type ProjectedTokenBreakdown = {
+  source: ProjectedTokenSource;
+  /** Prompt/context base before adding the last completion and current prompt. */
+  baseTokens: number;
+  /** Previous assistant completion tokens, when used in the projection. */
+  lastOutputTokens?: number;
+  /** Estimated tokens for the current user prompt, when used in the projection. */
+  promptEstimateTokens?: number;
+};
+
 /** Structured compaction trigger details for notices and Control UI agent events. */
 export type CompactionTriggerDetails = {
   /**
@@ -27,6 +46,8 @@ export type CompactionTriggerDetails = {
   reason?: "manual" | "threshold" | "overflow";
   /** Next-turn projected prompt tokens used for the token-budget gate. */
   projectedTokens?: number;
+  /** How projectedTokens was computed when the token-budget gate fired. */
+  projectedBreakdown?: ProjectedTokenBreakdown;
   /** Token-budget compaction threshold (contextWindow - reserve - soft). */
   threshold?: number;
   /** Active transcript byte size when the size gate fired. */
@@ -111,6 +132,178 @@ function resolveCompactionTriggerLabel(details?: CompactionTriggerDetails): stri
   }
 }
 
+function resolveProjectedTokenSourceLabel(source: ProjectedTokenSource): string {
+  switch (source) {
+    case "transcript_usage":
+      return "transcript";
+    case "fresh_persisted":
+      return "fresh session";
+    case "persisted":
+      return "persisted";
+  }
+}
+
+function readNonNegativeTokenCount(value: unknown): number | undefined {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+    return undefined;
+  }
+  return Math.floor(value);
+}
+
+/** Additive projection used by preflight token-budget gating. */
+export function resolveEffectivePromptTokens(
+  basePromptTokens?: number,
+  lastOutputTokens?: number,
+  promptTokenEstimate?: number,
+): number {
+  const base = Math.max(0, basePromptTokens ?? 0);
+  const output = Math.max(0, lastOutputTokens ?? 0);
+  const estimate = Math.max(0, promptTokenEstimate ?? 0);
+  return base + output + estimate;
+}
+
+/**
+ * Select the winning projected-token candidate for preflight compaction.
+ * Mirrors: max(usageProjected, freshProjected, persistedFloor).
+ */
+export function resolveProjectedTokenProjection(params: {
+  transcriptPromptTokens?: number;
+  transcriptOutputTokens?: number;
+  freshPersistedTokens?: number;
+  persistedPromptTokens?: number;
+  promptEstimateTokens?: number;
+}): { projectedTokens: number; breakdown: ProjectedTokenBreakdown } | undefined {
+  const transcriptPromptTokens = readNonNegativeTokenCount(params.transcriptPromptTokens);
+  const transcriptOutputTokens = readNonNegativeTokenCount(params.transcriptOutputTokens);
+  const freshPersistedTokens = readNonNegativeTokenCount(params.freshPersistedTokens);
+  const persistedPromptTokens = readNonNegativeTokenCount(params.persistedPromptTokens);
+  const promptEstimateTokens = readNonNegativeTokenCount(params.promptEstimateTokens);
+
+  const usageProjected =
+    transcriptPromptTokens !== undefined
+      ? resolveEffectivePromptTokens(
+          transcriptPromptTokens,
+          transcriptOutputTokens,
+          promptEstimateTokens,
+        )
+      : undefined;
+  const freshProjected =
+    freshPersistedTokens !== undefined
+      ? resolveEffectivePromptTokens(
+          freshPersistedTokens,
+          transcriptOutputTokens,
+          promptEstimateTokens,
+        )
+      : undefined;
+  const persistedFloor =
+    persistedPromptTokens !== undefined && persistedPromptTokens > 0
+      ? persistedPromptTokens
+      : undefined;
+
+  const projectedTokens = Math.max(usageProjected ?? 0, freshProjected ?? 0, persistedFloor ?? 0);
+  if (!Number.isFinite(projectedTokens) || projectedTokens <= 0) {
+    return undefined;
+  }
+
+  // Prefer additive sources when they tie the max, so the UI can show the sum.
+  if (usageProjected === projectedTokens && transcriptPromptTokens !== undefined) {
+    return {
+      projectedTokens,
+      breakdown: {
+        source: "transcript_usage",
+        baseTokens: transcriptPromptTokens,
+        ...(transcriptOutputTokens !== undefined && transcriptOutputTokens > 0
+          ? { lastOutputTokens: transcriptOutputTokens }
+          : {}),
+        ...(promptEstimateTokens !== undefined && promptEstimateTokens > 0
+          ? { promptEstimateTokens }
+          : {}),
+      },
+    };
+  }
+  if (freshProjected === projectedTokens && freshPersistedTokens !== undefined) {
+    return {
+      projectedTokens,
+      breakdown: {
+        source: "fresh_persisted",
+        baseTokens: freshPersistedTokens,
+        ...(transcriptOutputTokens !== undefined && transcriptOutputTokens > 0
+          ? { lastOutputTokens: transcriptOutputTokens }
+          : {}),
+        ...(promptEstimateTokens !== undefined && promptEstimateTokens > 0
+          ? { promptEstimateTokens }
+          : {}),
+      },
+    };
+  }
+  return {
+    projectedTokens,
+    breakdown: {
+      source: "persisted",
+      baseTokens: persistedPromptTokens ?? projectedTokens,
+    },
+  };
+}
+
+/** Formats the winning projected-token expression for notices and UI. */
+export function formatProjectedTokenExpression(params: {
+  projectedTokens: number;
+  breakdown?: ProjectedTokenBreakdown;
+}): string {
+  const projected = formatCompactTokenCount(params.projectedTokens);
+  const breakdown = params.breakdown;
+  if (!breakdown) {
+    return projected;
+  }
+  const source = resolveProjectedTokenSourceLabel(breakdown.source);
+  const base = formatCompactTokenCount(breakdown.baseTokens);
+  const lastOutput =
+    typeof breakdown.lastOutputTokens === "number" && breakdown.lastOutputTokens > 0
+      ? formatCompactTokenCount(breakdown.lastOutputTokens)
+      : undefined;
+  const promptEstimate =
+    typeof breakdown.promptEstimateTokens === "number" && breakdown.promptEstimateTokens > 0
+      ? formatCompactTokenCount(breakdown.promptEstimateTokens)
+      : undefined;
+  if (!lastOutput && !promptEstimate) {
+    return `${projected} (${source} ${base})`;
+  }
+  const parts = [`${base} base`];
+  if (lastOutput) {
+    parts.push(`${lastOutput} last-out`);
+  }
+  if (promptEstimate) {
+    parts.push(`${promptEstimate} prompt`);
+  }
+  return `${projected} = ${parts.join(" + ")} [${source}]`;
+}
+
+function readProjectedTokenBreakdown(value: unknown): ProjectedTokenBreakdown | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+  const record = value as Record<string, unknown>;
+  const sourceRaw = typeof record.source === "string" ? record.source : undefined;
+  const source =
+    sourceRaw === "transcript_usage" || sourceRaw === "fresh_persisted" || sourceRaw === "persisted"
+      ? sourceRaw
+      : undefined;
+  const baseTokens = readNonNegativeTokenCount(record.baseTokens);
+  if (!source || baseTokens === undefined) {
+    return undefined;
+  }
+  const lastOutputTokens = readNonNegativeTokenCount(record.lastOutputTokens);
+  const promptEstimateTokens = readNonNegativeTokenCount(record.promptEstimateTokens);
+  return {
+    source,
+    baseTokens,
+    ...(lastOutputTokens !== undefined && lastOutputTokens > 0 ? { lastOutputTokens } : {}),
+    ...(promptEstimateTokens !== undefined && promptEstimateTokens > 0
+      ? { promptEstimateTokens }
+      : {}),
+  };
+}
+
 /** Builds a short human-readable reason suffix for compaction notices and UI. */
 export function formatCompactionTriggerReason(
   details?: CompactionTriggerDetails,
@@ -125,7 +318,10 @@ export function formatCompactionTriggerReason(
     Number.isFinite(details.projectedTokens) &&
     details.projectedTokens > 0
   ) {
-    const projected = formatCompactTokenCount(details.projectedTokens);
+    const projected = formatProjectedTokenExpression({
+      projectedTokens: details.projectedTokens,
+      breakdown: details.projectedBreakdown,
+    });
     if (
       typeof details.threshold === "number" &&
       Number.isFinite(details.threshold) &&
@@ -197,6 +393,20 @@ export function buildCompactionAgentEventData(
     details.projectedTokens > 0
   ) {
     data.projectedTokens = Math.floor(details.projectedTokens);
+  }
+  if (details?.projectedBreakdown) {
+    data.projectedBreakdown = {
+      source: details.projectedBreakdown.source,
+      baseTokens: Math.floor(details.projectedBreakdown.baseTokens),
+      ...(typeof details.projectedBreakdown.lastOutputTokens === "number"
+        ? { lastOutputTokens: Math.floor(details.projectedBreakdown.lastOutputTokens) }
+        : {}),
+      ...(typeof details.projectedBreakdown.promptEstimateTokens === "number"
+        ? {
+            promptEstimateTokens: Math.floor(details.projectedBreakdown.promptEstimateTokens),
+          }
+        : {}),
+    };
   }
   if (
     typeof details?.threshold === "number" &&
@@ -287,29 +497,20 @@ export function readCompactionTriggerDetails(
     reasonRaw === "manual" || reasonRaw === "threshold" || reasonRaw === "overflow"
       ? reasonRaw
       : undefined;
-  const projectedTokens =
-    typeof data.projectedTokens === "number" && Number.isFinite(data.projectedTokens)
-      ? data.projectedTokens
-      : undefined;
-  const threshold =
-    typeof data.threshold === "number" && Number.isFinite(data.threshold)
-      ? data.threshold
-      : undefined;
-  const activeTranscriptBytes =
-    typeof data.activeTranscriptBytes === "number" && Number.isFinite(data.activeTranscriptBytes)
-      ? data.activeTranscriptBytes
-      : undefined;
-  const maxActiveTranscriptBytes =
-    typeof data.maxActiveTranscriptBytes === "number" &&
-    Number.isFinite(data.maxActiveTranscriptBytes)
-      ? data.maxActiveTranscriptBytes
-      : undefined;
+  const projectedTokens = readNonNegativeTokenCount(data.projectedTokens);
+  const projectedBreakdown = readProjectedTokenBreakdown(data.projectedBreakdown);
+  const threshold = readNonNegativeTokenCount(data.threshold);
+  const activeTranscriptBytes = readNonNegativeTokenCount(data.activeTranscriptBytes);
+  const maxActiveTranscriptBytes = readNonNegativeTokenCount(data.maxActiveTranscriptBytes);
   return {
     ...(trigger ? { trigger } : {}),
     ...(reason ? { reason } : {}),
-    ...(projectedTokens !== undefined ? { projectedTokens } : {}),
-    ...(threshold !== undefined ? { threshold } : {}),
+    ...(projectedTokens !== undefined && projectedTokens > 0 ? { projectedTokens } : {}),
+    ...(projectedBreakdown ? { projectedBreakdown } : {}),
+    ...(threshold !== undefined && threshold > 0 ? { threshold } : {}),
     ...(activeTranscriptBytes !== undefined ? { activeTranscriptBytes } : {}),
-    ...(maxActiveTranscriptBytes !== undefined ? { maxActiveTranscriptBytes } : {}),
+    ...(maxActiveTranscriptBytes !== undefined && maxActiveTranscriptBytes > 0
+      ? { maxActiveTranscriptBytes }
+      : {}),
   };
 }
