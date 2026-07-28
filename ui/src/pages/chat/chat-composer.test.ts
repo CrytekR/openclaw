@@ -797,8 +797,15 @@ describe("renderChatComposer status", () => {
         completedAt: null,
         trigger: "tokens",
         reason: "threshold",
-        reasonText: "token budget: projected 176k ≥ 176k",
+        reasonText:
+          "token budget: projected 176k = 160k base + 12k last-out + 4k prompt [fresh session]",
         projectedTokens: 176_000,
+        projectedBreakdown: {
+          source: "fresh_persisted",
+          baseTokens: 160_000,
+          lastOutputTokens: 12_000,
+          promptEstimateTokens: 4_000,
+        },
         threshold: 176_000,
       },
       fallbackStatus: {
@@ -809,7 +816,7 @@ describe("renderChatComposer status", () => {
       },
     });
     expect(container.querySelector(".compaction-indicator--active")?.textContent?.trim()).toBe(
-      "Compacting context (token budget: projected 176k ≥ 176k)...",
+      "Compacting context (token budget: projected 176k = 160k base + 12k last-out + 4k prompt [fresh session])...",
     );
     expect(container.querySelector(".compaction-indicator--fallback")?.textContent?.trim()).toBe(
       "Fallback active: deepinfra/moonshotai/Kimi-K2.5",

@@ -346,6 +346,13 @@ export type CompactionStatus = {
   reasonText?: string | null;
   /** Projected next-turn tokens for token-budget triggers. */
   projectedTokens?: number | null;
+  /** How projectedTokens was computed when provided. */
+  projectedBreakdown?: {
+    source: "transcript_usage" | "fresh_persisted" | "persisted";
+    baseTokens: number;
+    lastOutputTokens?: number;
+    promptEstimateTokens?: number;
+  } | null;
   /** Token-budget threshold when provided. */
   threshold?: number | null;
 };
@@ -470,7 +477,10 @@ const COMPACTION_ACTIVE_STALE_TIMEOUT_MS = 5 * 60_000;
 const FALLBACK_TOAST_DURATION_MS = 8000;
 
 type CompactionStatusDetails = Partial<
-  Pick<CompactionStatus, "trigger" | "reason" | "reasonText" | "projectedTokens" | "threshold">
+  Pick<
+    CompactionStatus,
+    "trigger" | "reason" | "reasonText" | "projectedTokens" | "projectedBreakdown" | "threshold"
+  >
 >;
 
 function compactionTriggerSpecificity(trigger: CompactionStatus["trigger"] | undefined): number {
@@ -486,6 +496,43 @@ function compactionTriggerSpecificity(trigger: CompactionStatus["trigger"] | und
     default:
       return 0;
   }
+}
+
+function readProjectedTokenBreakdown(
+  value: unknown,
+): CompactionStatus["projectedBreakdown"] | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+  const record = value as Record<string, unknown>;
+  const sourceRaw = typeof record.source === "string" ? record.source : undefined;
+  const source =
+    sourceRaw === "transcript_usage" || sourceRaw === "fresh_persisted" || sourceRaw === "persisted"
+      ? sourceRaw
+      : undefined;
+  const baseTokens =
+    typeof record.baseTokens === "number" && Number.isFinite(record.baseTokens)
+      ? Math.floor(record.baseTokens)
+      : undefined;
+  if (!source || baseTokens === undefined || baseTokens < 0) {
+    return undefined;
+  }
+  const lastOutputTokens =
+    typeof record.lastOutputTokens === "number" && Number.isFinite(record.lastOutputTokens)
+      ? Math.floor(record.lastOutputTokens)
+      : undefined;
+  const promptEstimateTokens =
+    typeof record.promptEstimateTokens === "number" && Number.isFinite(record.promptEstimateTokens)
+      ? Math.floor(record.promptEstimateTokens)
+      : undefined;
+  return {
+    source,
+    baseTokens,
+    ...(lastOutputTokens !== undefined && lastOutputTokens > 0 ? { lastOutputTokens } : {}),
+    ...(promptEstimateTokens !== undefined && promptEstimateTokens > 0
+      ? { promptEstimateTokens }
+      : {}),
+  };
 }
 
 function readCompactionStatusDetails(data: Record<string, unknown>): CompactionStatusDetails {
@@ -510,6 +557,7 @@ function readCompactionStatusDetails(data: Record<string, unknown>): CompactionS
     typeof data.projectedTokens === "number" && Number.isFinite(data.projectedTokens)
       ? Math.floor(data.projectedTokens)
       : undefined;
+  const projectedBreakdown = readProjectedTokenBreakdown(data.projectedBreakdown);
   const threshold =
     typeof data.threshold === "number" && Number.isFinite(data.threshold)
       ? Math.floor(data.threshold)
@@ -519,6 +567,7 @@ function readCompactionStatusDetails(data: Record<string, unknown>): CompactionS
     ...(reason ? { reason } : {}),
     ...(reasonText ? { reasonText } : {}),
     ...(projectedTokens !== undefined ? { projectedTokens } : {}),
+    ...(projectedBreakdown ? { projectedBreakdown } : {}),
     ...(threshold !== undefined ? { threshold } : {}),
   };
 }
@@ -544,6 +593,9 @@ function mergeCompactionStatusDetails(
       : typeof previous?.projectedTokens === "number"
         ? previous.projectedTokens
         : undefined;
+  const projectedBreakdown = keepPreviousTrigger
+    ? (previous?.projectedBreakdown ?? incoming.projectedBreakdown)
+    : (incoming.projectedBreakdown ?? previous?.projectedBreakdown);
   const threshold =
     typeof incoming.threshold === "number"
       ? incoming.threshold
@@ -561,6 +613,7 @@ function mergeCompactionStatusDetails(
     ...(reason ? { reason } : {}),
     ...(reasonText ? { reasonText } : {}),
     ...(projectedTokens !== undefined ? { projectedTokens } : {}),
+    ...(projectedBreakdown ? { projectedBreakdown } : {}),
     ...(threshold !== undefined ? { threshold } : {}),
   };
 }

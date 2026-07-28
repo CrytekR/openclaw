@@ -1246,10 +1246,42 @@ function resolveCompactionStatusReason(status: CompactionStatus): string | null 
   if (status.trigger === "tokens") {
     if (typeof status.projectedTokens === "number" && status.projectedTokens > 0) {
       const projected = formatCompactTokenCount(status.projectedTokens);
+      const breakdown = status.projectedBreakdown;
+      const projectedExpr = (() => {
+        if (!breakdown) {
+          return projected;
+        }
+        const source =
+          breakdown.source === "transcript_usage"
+            ? "transcript"
+            : breakdown.source === "fresh_persisted"
+              ? "fresh session"
+              : "persisted";
+        const base = formatCompactTokenCount(breakdown.baseTokens);
+        const lastOutput =
+          typeof breakdown.lastOutputTokens === "number" && breakdown.lastOutputTokens > 0
+            ? formatCompactTokenCount(breakdown.lastOutputTokens)
+            : undefined;
+        const promptEstimate =
+          typeof breakdown.promptEstimateTokens === "number" && breakdown.promptEstimateTokens > 0
+            ? formatCompactTokenCount(breakdown.promptEstimateTokens)
+            : undefined;
+        if (!lastOutput && !promptEstimate) {
+          return `${projected} (${source} ${base})`;
+        }
+        const parts = [`${base} base`];
+        if (lastOutput) {
+          parts.push(`${lastOutput} last-out`);
+        }
+        if (promptEstimate) {
+          parts.push(`${promptEstimate} prompt`);
+        }
+        return `${projected} = ${parts.join(" + ")} [${source}]`;
+      })();
       if (typeof status.threshold === "number" && status.threshold > 0) {
-        return `token budget: projected ${projected} ≥ ${formatCompactTokenCount(status.threshold)}`;
+        return `token budget: projected ${projectedExpr} ≥ ${formatCompactTokenCount(status.threshold)}`;
       }
-      return `token budget: projected ${projected}`;
+      return `token budget: projected ${projectedExpr}`;
     }
     return "token budget";
   }
