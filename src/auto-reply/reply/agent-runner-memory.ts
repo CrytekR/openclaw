@@ -67,6 +67,7 @@ import {
   resolveProjectedTokenProjection,
   type CompactionNoticePhase,
   type CompactionTriggerDetails,
+  type TranscriptRecountMethod,
 } from "./compaction-notice.js";
 import {
   hasAlreadyFlushedForCurrentCompaction,
@@ -641,6 +642,7 @@ type TranscriptTokenEstimate = {
   outputTokens?: number;
   transcriptByteSize?: number;
   transcriptBytesTokens?: number;
+  recountMethod: TranscriptRecountMethod;
 };
 
 async function estimatePromptTokensFromSessionTranscript(params: {
@@ -685,6 +687,7 @@ async function estimatePromptTokensFromSessionTranscript(params: {
         outputTokens: Math.ceil(outputTokens),
         transcriptByteSize: snapshot.byteSize,
         transcriptBytesTokens,
+        recountMethod: "last_model_usage",
       };
     }
     const messages = (await readSessionMessagesAsync(
@@ -706,6 +709,8 @@ async function estimatePromptTokensFromSessionTranscript(params: {
     })();
     if (typeof promptTokens === "number" && Number.isFinite(promptTokens) && promptTokens > 0) {
       const usagePromptTokens = Math.ceil(promptTokens) + (trailingBytesTokens ?? 0);
+      const messageWins =
+        typeof estimatedMessageTokens === "number" && estimatedMessageTokens > usagePromptTokens;
       return {
         promptTokens: Math.max(usagePromptTokens, estimatedMessageTokens ?? 0),
         outputTokens:
@@ -714,17 +719,30 @@ async function estimatePromptTokensFromSessionTranscript(params: {
             : undefined,
         transcriptByteSize: snapshot.byteSize,
         transcriptBytesTokens,
+        recountMethod: messageWins
+          ? "recent_messages_estimate"
+          : (trailingBytesTokens ?? 0) > 0
+            ? "model_usage_plus_unread_tail"
+            : "last_model_usage",
       };
     }
-    const estimatedTokens = estimatedMessageTokens ?? transcriptBytesTokens;
-    if (estimatedTokens === undefined) {
-      return undefined;
+    if (typeof estimatedMessageTokens === "number") {
+      return {
+        promptTokens: Math.ceil(estimatedMessageTokens),
+        transcriptByteSize: snapshot.byteSize,
+        transcriptBytesTokens,
+        recountMethod: "recent_messages_estimate",
+      };
     }
-    return {
-      promptTokens: Math.ceil(estimatedTokens),
-      transcriptByteSize: snapshot.byteSize,
-      transcriptBytesTokens,
-    };
+    if (typeof transcriptBytesTokens === "number") {
+      return {
+        promptTokens: Math.ceil(transcriptBytesTokens),
+        transcriptByteSize: snapshot.byteSize,
+        transcriptBytesTokens,
+        recountMethod: "chat_log_file_size",
+      };
+    }
+    return undefined;
   } catch {
     return undefined;
   }
@@ -871,6 +889,7 @@ export async function runPreflightCompactionIfNeeded(params: {
     freshPersistedTokens,
     persistedPromptTokens: stalePersistedPromptTokens,
     promptEstimateTokens: promptTokenEstimate,
+    transcriptRecountMethod: transcriptUsageTokens?.recountMethod,
   });
   const tokenCountForCompaction = projectedProjection?.projectedTokens;
 

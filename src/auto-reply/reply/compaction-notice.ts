@@ -19,6 +19,19 @@ export type CompactionNoticePhase =
  */
 export type ProjectedTokenSource = "transcript_usage" | "fresh_persisted" | "persisted";
 
+/**
+ * Which transcript recount algorithm produced the chat-log base.
+ * - last_model_usage: latest provider usage prompt tokens
+ * - model_usage_plus_unread_tail: usage prompt + unread trailing bytes/4
+ * - recent_messages_estimate: estimateMessagesTokens over recent transcript messages
+ * - chat_log_file_size: ceil(transcript bytes / 4)
+ */
+export type TranscriptRecountMethod =
+  | "last_model_usage"
+  | "model_usage_plus_unread_tail"
+  | "recent_messages_estimate"
+  | "chat_log_file_size";
+
 /** Additive terms that produced the winning projected-token count. */
 export type ProjectedTokenBreakdown = {
   source: ProjectedTokenSource;
@@ -28,6 +41,8 @@ export type ProjectedTokenBreakdown = {
   lastOutputTokens?: number;
   /** Estimated tokens for the current user prompt, when used in the projection. */
   promptEstimateTokens?: number;
+  /** Specific chat-log recount algorithm when source is transcript_usage. */
+  recountMethod?: TranscriptRecountMethod;
 };
 
 /** Structured compaction trigger details for notices and Control UI agent events. */
@@ -146,11 +161,33 @@ function resolveProjectedTokenSourceLabel(source: ProjectedTokenSource): string 
   }
 }
 
+function resolveTranscriptRecountMethodLabel(method: TranscriptRecountMethod): string {
+  switch (method) {
+    case "last_model_usage":
+      return "last model usage";
+    case "model_usage_plus_unread_tail":
+      return "model usage + unread tail";
+    case "recent_messages_estimate":
+      return "recent messages estimate";
+    case "chat_log_file_size":
+      return "chat-log size ÷ 4";
+  }
+}
+
 function readNonNegativeTokenCount(value: unknown): number | undefined {
   if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
     return undefined;
   }
   return Math.floor(value);
+}
+
+function readTranscriptRecountMethod(value: unknown): TranscriptRecountMethod | undefined {
+  return value === "last_model_usage" ||
+    value === "model_usage_plus_unread_tail" ||
+    value === "recent_messages_estimate" ||
+    value === "chat_log_file_size"
+    ? value
+    : undefined;
 }
 
 /** Additive projection used by preflight token-budget gating. */
@@ -175,12 +212,14 @@ export function resolveProjectedTokenProjection(params: {
   freshPersistedTokens?: number;
   persistedPromptTokens?: number;
   promptEstimateTokens?: number;
+  transcriptRecountMethod?: TranscriptRecountMethod;
 }): { projectedTokens: number; breakdown: ProjectedTokenBreakdown } | undefined {
   const transcriptPromptTokens = readNonNegativeTokenCount(params.transcriptPromptTokens);
   const transcriptOutputTokens = readNonNegativeTokenCount(params.transcriptOutputTokens);
   const freshPersistedTokens = readNonNegativeTokenCount(params.freshPersistedTokens);
   const persistedPromptTokens = readNonNegativeTokenCount(params.persistedPromptTokens);
   const promptEstimateTokens = readNonNegativeTokenCount(params.promptEstimateTokens);
+  const transcriptRecountMethod = readTranscriptRecountMethod(params.transcriptRecountMethod);
 
   const usageProjected =
     transcriptPromptTokens !== undefined
@@ -221,6 +260,7 @@ export function resolveProjectedTokenProjection(params: {
         ...(promptEstimateTokens !== undefined && promptEstimateTokens > 0
           ? { promptEstimateTokens }
           : {}),
+        ...(transcriptRecountMethod ? { recountMethod: transcriptRecountMethod } : {}),
       },
     };
   }
@@ -259,6 +299,11 @@ export function formatProjectedTokenExpression(params: {
     return projected;
   }
   const source = resolveProjectedTokenSourceLabel(breakdown.source);
+  const recountMethod =
+    breakdown.source === "transcript_usage" && breakdown.recountMethod
+      ? resolveTranscriptRecountMethodLabel(breakdown.recountMethod)
+      : undefined;
+  const sourceLabel = recountMethod ? `${source} via ${recountMethod}` : source;
   const base = formatCompactTokenCount(breakdown.baseTokens);
   const lastOutput =
     typeof breakdown.lastOutputTokens === "number" && breakdown.lastOutputTokens > 0
@@ -270,7 +315,7 @@ export function formatProjectedTokenExpression(params: {
       : undefined;
   // Spell out what each term means so the indicator is readable without
   // knowing internal source ids (fresh_persisted / transcript_usage / persisted).
-  const baseTerm = `${base} ${source}`;
+  const baseTerm = `${base} ${sourceLabel}`;
   if (!lastOutput && !promptEstimate) {
     return `${projected} (${baseTerm})`;
   }
@@ -300,6 +345,7 @@ function readProjectedTokenBreakdown(value: unknown): ProjectedTokenBreakdown | 
   }
   const lastOutputTokens = readNonNegativeTokenCount(record.lastOutputTokens);
   const promptEstimateTokens = readNonNegativeTokenCount(record.promptEstimateTokens);
+  const recountMethod = readTranscriptRecountMethod(record.recountMethod);
   return {
     source,
     baseTokens,
@@ -307,6 +353,7 @@ function readProjectedTokenBreakdown(value: unknown): ProjectedTokenBreakdown | 
     ...(promptEstimateTokens !== undefined && promptEstimateTokens > 0
       ? { promptEstimateTokens }
       : {}),
+    ...(source === "transcript_usage" && recountMethod ? { recountMethod } : {}),
   };
 }
 
@@ -411,6 +458,10 @@ export function buildCompactionAgentEventData(
         ? {
             promptEstimateTokens: Math.floor(details.projectedBreakdown.promptEstimateTokens),
           }
+        : {}),
+      ...(details.projectedBreakdown.source === "transcript_usage" &&
+      details.projectedBreakdown.recountMethod
+        ? { recountMethod: details.projectedBreakdown.recountMethod }
         : {}),
     };
   }

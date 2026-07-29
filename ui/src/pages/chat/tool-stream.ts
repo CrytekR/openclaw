@@ -352,6 +352,11 @@ export type CompactionStatus = {
     baseTokens: number;
     lastOutputTokens?: number;
     promptEstimateTokens?: number;
+    recountMethod?:
+      | "last_model_usage"
+      | "model_usage_plus_unread_tail"
+      | "recent_messages_estimate"
+      | "chat_log_file_size";
   } | null;
   /** Token-budget threshold when provided. */
   threshold?: number | null;
@@ -525,6 +530,15 @@ function readProjectedTokenBreakdown(
     typeof record.promptEstimateTokens === "number" && Number.isFinite(record.promptEstimateTokens)
       ? Math.floor(record.promptEstimateTokens)
       : undefined;
+  const recountMethodRaw =
+    typeof record.recountMethod === "string" ? record.recountMethod : undefined;
+  const recountMethod =
+    recountMethodRaw === "last_model_usage" ||
+    recountMethodRaw === "model_usage_plus_unread_tail" ||
+    recountMethodRaw === "recent_messages_estimate" ||
+    recountMethodRaw === "chat_log_file_size"
+      ? recountMethodRaw
+      : undefined;
   return {
     source,
     baseTokens,
@@ -532,6 +546,7 @@ function readProjectedTokenBreakdown(
     ...(promptEstimateTokens !== undefined && promptEstimateTokens > 0
       ? { promptEstimateTokens }
       : {}),
+    ...(source === "transcript_usage" && recountMethod ? { recountMethod } : {}),
   };
 }
 

@@ -1257,6 +1257,19 @@ function resolveCompactionStatusReason(status: CompactionStatus): string | null 
             : breakdown.source === "fresh_persisted"
               ? "context meter"
               : "saved context floor";
+        const recountMethod =
+          breakdown.source === "transcript_usage"
+            ? breakdown.recountMethod === "last_model_usage"
+              ? "last model usage"
+              : breakdown.recountMethod === "model_usage_plus_unread_tail"
+                ? "model usage + unread tail"
+                : breakdown.recountMethod === "recent_messages_estimate"
+                  ? "recent messages estimate"
+                  : breakdown.recountMethod === "chat_log_file_size"
+                    ? "chat-log size ÷ 4"
+                    : undefined
+            : undefined;
+        const sourceLabel = recountMethod ? `${source} via ${recountMethod}` : source;
         const base = formatCompactTokenCount(breakdown.baseTokens);
         const lastOutput =
           typeof breakdown.lastOutputTokens === "number" && breakdown.lastOutputTokens > 0
@@ -1266,7 +1279,7 @@ function resolveCompactionStatusReason(status: CompactionStatus): string | null 
           typeof breakdown.promptEstimateTokens === "number" && breakdown.promptEstimateTokens > 0
             ? formatCompactTokenCount(breakdown.promptEstimateTokens)
             : undefined;
-        const baseTerm = `${base} ${source}`;
+        const baseTerm = `${base} ${sourceLabel}`;
         if (!lastOutput && !promptEstimate) {
           return `${projected} (${baseTerm})`;
         }
