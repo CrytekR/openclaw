@@ -1058,8 +1058,8 @@ describe("runMemoryFlushIfNeeded", () => {
       contextTokenBudget: 100,
     });
     expect(incrementCompactionCountMock).not.toHaveBeenCalled();
-    expect(onCompactionNotice).toHaveBeenNthCalledWith(1, "start");
-    expect(onCompactionNotice).toHaveBeenNthCalledWith(2, "skipped");
+    expect(onCompactionNotice).toHaveBeenNthCalledWith(1, "start", expect.any(Object));
+    expect(onCompactionNotice).toHaveBeenNthCalledWith(2, "skipped", expect.any(Object));
   });
 
   it("fails when required preflight context-engine compaction is deferred to background maintenance", async () => {
@@ -2235,8 +2235,8 @@ describe("runMemoryFlushIfNeeded", () => {
       onCompactionNotice,
     });
 
-    expect(onCompactionNotice).toHaveBeenNthCalledWith(1, "start");
-    expect(onCompactionNotice).toHaveBeenNthCalledWith(2, "end");
+    expect(onCompactionNotice).toHaveBeenNthCalledWith(1, "start", expect.any(Object));
+    expect(onCompactionNotice).toHaveBeenNthCalledWith(2, "end", expect.any(Object));
   });
 
   it("emits an incomplete preflight compaction notice when post-compaction state update throws", async () => {
@@ -2287,8 +2287,8 @@ describe("runMemoryFlushIfNeeded", () => {
       }),
     ).rejects.toThrow("count update failed");
 
-    expect(onCompactionNotice).toHaveBeenNthCalledWith(1, "start");
-    expect(onCompactionNotice).toHaveBeenNthCalledWith(2, "incomplete");
+    expect(onCompactionNotice).toHaveBeenNthCalledWith(1, "start", expect.any(Object));
+    expect(onCompactionNotice).toHaveBeenNthCalledWith(2, "incomplete", expect.any(Object));
   });
 
   it("keeps the active transcript byte threshold inactive unless transcript rotation is enabled", async () => {

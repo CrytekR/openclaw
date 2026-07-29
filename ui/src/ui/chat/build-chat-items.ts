@@ -688,6 +688,10 @@ export function buildChatItems(props: BuildChatItemsProps): Array<ChatItem | Mes
     const raw = asRecord(msg) ?? {};
     const marker = raw["__openclaw"] as Record<string, unknown> | undefined;
     if (marker && marker.kind === "compaction") {
+      const reasonText =
+        typeof marker.reasonText === "string" && marker.reasonText.trim()
+          ? marker.reasonText.trim()
+          : undefined;
       items.push({
         kind: "divider",
         key:
@@ -696,6 +700,7 @@ export function buildChatItems(props: BuildChatItemsProps): Array<ChatItem | Mes
             : `divider:compaction:${normalized.timestamp}:${i}`,
         label: "Compacted history",
         description:
+          reasonText ??
           "The compacted transcript is preserved as a checkpoint. Open session checkpoints to branch or restore from that compacted view.",
         action: {
           kind: "session-checkpoints",

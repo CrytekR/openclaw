@@ -443,6 +443,10 @@ export type CompactionStatus = {
   runId: string | null;
   startedAt: number | null;
   completedAt: number | null;
+  reasonText?: string | null;
+  trigger?: string | null;
+  projectedTokens?: number | null;
+  threshold?: number | null;
 };
 
 export type FallbackStatus = {
@@ -493,14 +497,50 @@ function scheduleCompactionClear(
   }, delayMs);
 }
 
-function setCompactionComplete(host: CompactionHost, runId: string) {
+function setCompactionComplete(
+  host: CompactionHost,
+  runId: string,
+  details?: Partial<Pick<CompactionStatus, "reasonText" | "trigger" | "projectedTokens" | "threshold">>,
+) {
+  const reasonText = details?.reasonText ?? host.compactionStatus?.reasonText;
+  const trigger = details?.trigger ?? host.compactionStatus?.trigger;
+  const projectedTokens = details?.projectedTokens ?? host.compactionStatus?.projectedTokens;
+  const threshold = details?.threshold ?? host.compactionStatus?.threshold;
   host.compactionStatus = {
     phase: "complete",
     runId,
     startedAt: host.compactionStatus?.startedAt ?? null,
     completedAt: Date.now(),
+    ...(reasonText ? { reasonText } : {}),
+    ...(trigger ? { trigger } : {}),
+    ...(typeof projectedTokens === "number" ? { projectedTokens } : {}),
+    ...(typeof threshold === "number" ? { threshold } : {}),
   };
   scheduleCompactionClear(host, COMPACTION_TOAST_DURATION_MS, { phase: "complete", runId });
+}
+
+function readCompactionStatusDetails(data: Record<string, unknown>): Partial<
+  Pick<CompactionStatus, "reasonText" | "trigger" | "projectedTokens" | "threshold">
+> {
+  const reasonText =
+    typeof data.reasonText === "string" && data.reasonText.trim() ? data.reasonText.trim() : null;
+  const trigger = typeof data.trigger === "string" && data.trigger.trim() ? data.trigger.trim() : null;
+  const projectedTokens =
+    typeof data.projectedTokens === "number" &&
+    Number.isFinite(data.projectedTokens) &&
+    data.projectedTokens > 0
+      ? Math.floor(data.projectedTokens)
+      : null;
+  const threshold =
+    typeof data.threshold === "number" && Number.isFinite(data.threshold) && data.threshold > 0
+      ? Math.floor(data.threshold)
+      : null;
+  return {
+    ...(reasonText ? { reasonText } : {}),
+    ...(trigger ? { trigger } : {}),
+    ...(projectedTokens != null ? { projectedTokens } : {}),
+    ...(threshold != null ? { threshold } : {}),
+  };
 }
 
 export function handleSessionOperationEvent(
@@ -538,6 +578,8 @@ export function handleSessionOperationEvent(
       runId: operationId,
       startedAt: Date.now(),
       completedAt: null,
+      reasonText: "manual",
+      trigger: "manual",
     };
     scheduleCompactionClear(compactionHost, COMPACTION_ACTIVE_STALE_TIMEOUT_MS, {
       phase: "active",
@@ -567,6 +609,7 @@ export function handleCompactionEvent(host: CompactionHost, payload: AgentEventP
   const data = payload.data ?? {};
   const phase = typeof data.phase === "string" ? data.phase : "";
   const completed = data.completed === true;
+  const details = readCompactionStatusDetails(data);
 
   clearCompactionTimer(host);
 
@@ -576,6 +619,7 @@ export function handleCompactionEvent(host: CompactionHost, payload: AgentEventP
       runId: payload.runId,
       startedAt: Date.now(),
       completedAt: null,
+      ...details,
     };
     scheduleCompactionClear(host, COMPACTION_ACTIVE_STALE_TIMEOUT_MS, {
       phase: "active",
@@ -587,11 +631,19 @@ export function handleCompactionEvent(host: CompactionHost, payload: AgentEventP
     if (data.willRetry === true && completed) {
       // Compaction already succeeded, but the run is still retrying.
       // Keep that distinct state until the matching lifecycle end arrives.
+      const reasonText = details.reasonText ?? host.compactionStatus?.reasonText;
+      const trigger = details.trigger ?? host.compactionStatus?.trigger;
+      const projectedTokens = details.projectedTokens ?? host.compactionStatus?.projectedTokens;
+      const threshold = details.threshold ?? host.compactionStatus?.threshold;
       host.compactionStatus = {
         phase: "retrying",
         runId: payload.runId,
         startedAt: host.compactionStatus?.startedAt ?? Date.now(),
         completedAt: null,
+        ...(reasonText ? { reasonText } : {}),
+        ...(trigger ? { trigger } : {}),
+        ...(typeof projectedTokens === "number" ? { projectedTokens } : {}),
+        ...(typeof threshold === "number" ? { threshold } : {}),
       };
       scheduleCompactionClear(host, COMPACTION_ACTIVE_STALE_TIMEOUT_MS, {
         phase: "retrying",
@@ -600,7 +652,7 @@ export function handleCompactionEvent(host: CompactionHost, payload: AgentEventP
       return;
     }
     if (completed) {
-      setCompactionComplete(host, payload.runId);
+      setCompactionComplete(host, payload.runId, details);
       return;
     }
     host.compactionStatus = null;

@@ -4,6 +4,10 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import { isAcpRuntimeSpawnAvailable } from "../../acp/runtime/availability.js";
+import {
+  mergeCompactionReasonTextIntoDetails,
+  resolveCompactionPersistReasonText,
+} from "../../auto-reply/reply/compaction-notice.js";
 import type { ThinkLevel } from "../../auto-reply/thinking.js";
 import { resolveAgentModelFallbackValues } from "../../config/model-input.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
@@ -1207,6 +1211,28 @@ async function compactEmbeddedAgentSessionDirectOnce(
             : undefined,
         allowedToolNames,
       });
+      const compactionReasonText = resolveCompactionPersistReasonText({
+        reasonText: params.reasonText,
+        trigger: params.trigger,
+        preflightCompactionTrigger: params.preflightCompactionTrigger,
+      });
+      if (compactionReasonText) {
+        const originalAppendCompaction = sessionManager.appendCompaction.bind(sessionManager);
+        sessionManager.appendCompaction = ((
+          summary,
+          firstKeptEntryId,
+          tokensBefore,
+          details,
+          fromHook,
+        ) =>
+          originalAppendCompaction(
+            summary,
+            firstKeptEntryId,
+            tokensBefore,
+            mergeCompactionReasonTextIntoDetails(details, compactionReasonText),
+            fromHook,
+          )) as typeof sessionManager.appendCompaction;
+      }
       checkpointSnapshot = await compactionCheckpointStore.captureSnapshot({
         sessionManager,
         sessionFile: params.sessionFile,
@@ -1575,6 +1601,7 @@ async function compactEmbeddedAgentSessionDirectOnce(
                 firstKeptEntryId: effectiveFirstKeptEntryId,
                 tokensBefore: observedTokenCount ?? result.tokensBefore,
                 tokensAfter,
+                ...(compactionReasonText ? { reasonText: compactionReasonText } : {}),
                 postSessionFile: activeSessionFile,
                 postLeafId: checkpointPosition.leafId,
                 postEntryId: checkpointPosition.entryId,

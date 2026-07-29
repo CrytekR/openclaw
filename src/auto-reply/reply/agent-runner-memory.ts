@@ -47,7 +47,12 @@ import {
   buildEmbeddedRunExecutionParams,
   resolveModelFallbackOptions,
 } from "./agent-runner-utils.js";
-import type { CompactionNoticePhase } from "./compaction-notice.js";
+import {
+  buildCompactionAgentEventData,
+  formatCompactionTriggerReason,
+  type CompactionNoticePhase,
+  type CompactionTriggerDetails,
+} from "./compaction-notice.js";
 import {
   hasAlreadyFlushedForCurrentCompaction,
   resolveMaxActiveTranscriptBytes,
@@ -732,7 +737,10 @@ export async function runPreflightCompactionIfNeeded(params: {
   storePath?: string;
   isHeartbeat: boolean;
   replyOperation: ReplyOperation;
-  onCompactionNotice?: (phase: CompactionNoticePhase) => Promise<void> | void;
+  onCompactionNotice?: (
+    phase: CompactionNoticePhase,
+    details?: CompactionTriggerDetails,
+  ) => Promise<void> | void;
 }): Promise<SessionEntry | undefined> {
   const deps = {
     compactEmbeddedAgentSession: memoryDeps.compactEmbeddedAgentSession,
@@ -909,6 +917,16 @@ export async function runPreflightCompactionIfNeeded(params: {
   }
 
   const compactionTrigger = shouldCompactByTranscriptBytes ? "transcript_bytes" : "tokens";
+  const compactionDetails: CompactionTriggerDetails = {
+    trigger: compactionTrigger,
+    reason: "threshold",
+    ...(typeof tokenCountForCompaction === "number"
+      ? { projectedTokens: tokenCountForCompaction }
+      : {}),
+    ...(threshold > 0 ? { threshold } : {}),
+    ...(typeof activeTranscriptBytes === "number" ? { activeTranscriptBytes } : {}),
+    ...(typeof maxActiveTranscriptBytes === "number" ? { maxActiveTranscriptBytes } : {}),
+  };
   logVerbose(
     `preflightCompaction triggered: sessionKey=${params.sessionKey} ` +
       `tokenCount=${tokenCountForCompaction ?? freshPersistedTokens ?? "undefined"} ` +
@@ -918,9 +936,42 @@ export async function runPreflightCompactionIfNeeded(params: {
   );
 
   params.replyOperation.setPhase("preflight_compacting");
+  const resolveCompactionEventRunId = (): string | undefined => {
+    const sessionKey = normalizeOptionalString(params.sessionKey);
+    if (!sessionKey) {
+      return undefined;
+    }
+    return `preflight-compaction:${sessionKey}`;
+  };
+  const emitCompactionUiEvent = (phase: "start" | "end", extras?: Record<string, unknown>) => {
+    const runId = resolveCompactionEventRunId();
+    if (!runId) {
+      return;
+    }
+    const sessionKey = normalizeOptionalString(params.sessionKey);
+    if (sessionKey) {
+      memoryDeps.registerAgentRunContext(runId, {
+        sessionKey,
+        isControlUiVisible: true,
+      });
+    }
+    memoryDeps.emitAgentEvent({
+      runId,
+      stream: "compaction",
+      data: buildCompactionAgentEventData(phase, compactionDetails, extras),
+      ...(sessionKey ? { sessionKey } : {}),
+    });
+  };
   const notifyCompaction = async (phase: CompactionNoticePhase) => {
     try {
-      await params.onCompactionNotice?.(phase);
+      if (phase === "start") {
+        emitCompactionUiEvent("start");
+      } else if (phase === "end") {
+        emitCompactionUiEvent("end", { completed: true });
+      } else if (phase === "incomplete") {
+        emitCompactionUiEvent("end", { completed: false });
+      }
+      await params.onCompactionNotice?.(phase, compactionDetails);
     } catch (err) {
       logVerbose(`preflightCompaction notice delivery failed: ${String(err)}`);
     }
@@ -974,6 +1025,7 @@ export async function runPreflightCompactionIfNeeded(params: {
       forcePreflight: true,
       preflightRequired: true,
       preflightCompactionTrigger: compactionTrigger,
+      reasonText: formatCompactionTriggerReason(compactionDetails),
       deferOwningContextEngineCompaction: false,
       contextTokenBudget: contextWindowTokens,
       currentTokenCount: tokenCountForCompaction ?? freshPersistedTokens,

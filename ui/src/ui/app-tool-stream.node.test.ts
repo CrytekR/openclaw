@@ -631,6 +631,8 @@ describe("app-tool-stream fallback lifecycle handling", () => {
       runId: "operation-1",
       startedAt: TOOL_STREAM_TEST_NOW,
       completedAt: null,
+      reasonText: "manual",
+      trigger: "manual",
     });
 
     handleSessionOperationEvent(host, {
@@ -647,6 +649,8 @@ describe("app-tool-stream fallback lifecycle handling", () => {
       runId: "operation-1",
       startedAt: TOOL_STREAM_TEST_NOW,
       completedAt: TOOL_STREAM_TEST_NOW,
+      reasonText: "manual",
+      trigger: "manual",
     });
 
     vi.useRealTimers();
@@ -768,6 +772,8 @@ describe("app-tool-stream fallback lifecycle handling", () => {
       runId: "operation-2",
       startedAt: TOOL_STREAM_TEST_NOW,
       completedAt: null,
+      reasonText: "manual",
+      trigger: "manual",
     });
     vi.advanceTimersByTime(5 * 60_000);
     expect(host.compactionStatus).toBeNull();

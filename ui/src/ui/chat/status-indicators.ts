@@ -53,14 +53,19 @@ export function renderCompactionIndicator(status: CompactionStatus | null | unde
   if (!status) {
     return nothing;
   }
+  const reason =
+    typeof status.reasonText === "string" && status.reasonText.trim()
+      ? status.reasonText.trim()
+      : null;
   if (status.phase === "active" || status.phase === "retrying") {
     return html`
       <div
         class="compaction-indicator compaction-indicator--active"
         role="status"
         aria-live="polite"
+        title=${reason ?? ""}
       >
-        ${icons.loader} Compacting context...
+        ${icons.loader} Compacting context${reason ? html` (${reason})` : nothing}...
       </div>
     `;
   }
@@ -72,8 +77,9 @@ export function renderCompactionIndicator(status: CompactionStatus | null | unde
           class="compaction-indicator compaction-indicator--complete"
           role="status"
           aria-live="polite"
+          title=${reason ?? ""}
         >
-          ${icons.check} Context compacted
+          ${icons.check} Context compacted${reason ? html` (${reason})` : nothing}
         </div>
       `;
     }

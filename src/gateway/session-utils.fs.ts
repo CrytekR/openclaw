@@ -812,6 +812,14 @@ function parsedSessionEntryToMessage(parsed: unknown, seq: number): unknown {
   if (entry.type === "compaction") {
     const ts = typeof entry.timestamp === "string" ? Date.parse(entry.timestamp) : Number.NaN;
     const timestamp = Number.isFinite(ts) ? ts : Date.now();
+    const details =
+      entry.details && typeof entry.details === "object" && !Array.isArray(entry.details)
+        ? (entry.details as Record<string, unknown>)
+        : undefined;
+    const reasonText =
+      typeof details?.reasonText === "string" && details.reasonText.trim()
+        ? details.reasonText.trim()
+        : undefined;
     return {
       role: "system",
       content: [{ type: "text", text: "Compaction" }],
@@ -820,6 +828,7 @@ function parsedSessionEntryToMessage(parsed: unknown, seq: number): unknown {
         kind: "compaction",
         id: typeof entry.id === "string" ? entry.id : undefined,
         seq,
+        ...(reasonText ? { reasonText } : {}),
       },
     };
   }
