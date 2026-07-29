@@ -96,6 +96,11 @@ export type CompactEmbeddedAgentSessionParams = {
   preflightRequired?: boolean;
   /** Diagnostic trigger that made preflight compaction mandatory. */
   preflightCompactionTrigger?: "tokens" | "transcript_bytes";
+  /**
+   * Durable Control UI divider reason for this compaction. Prefer a formatted
+   * trigger string (projected tokens, transcript size, overflow, manual).
+   */
+  reasonText?: string;
   trigger?: "budget" | "overflow" | "manual";
   /**
    * Preflight callers can allow native/current-session harness compaction but

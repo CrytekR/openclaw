@@ -154,7 +154,12 @@ import type {
   CompactEmbeddedAgentSessionRuntimeParams,
   CompactionMessageMetrics,
 } from "./compact.types.js";
-import { compactionCheckpointStore, persistCompactionCheckpoint } from "./compaction-checkpoint.js";
+import {
+  attachCompactionReasonTextToSessionManager,
+  compactionCheckpointStore,
+  persistCompactionCheckpoint,
+  resolveEmbeddedCompactionReasonText,
+} from "./compaction-checkpoint.js";
 import { dedupeDuplicateUserMessagesForCompaction } from "./compaction-duplicate-user-messages.js";
 import {
   asCompactionHookRunner,
@@ -1300,6 +1305,12 @@ async function compactEmbeddedAgentSessionDirectOnce(
             : undefined,
         allowedToolNames,
       });
+      const compactionReasonText = resolveEmbeddedCompactionReasonText({
+        reasonText: params.reasonText,
+        trigger: params.trigger,
+        preflightCompactionTrigger: params.preflightCompactionTrigger,
+      });
+      attachCompactionReasonTextToSessionManager(sessionManager, compactionReasonText);
       checkpointSnapshot = await compactionCheckpointStore.captureSnapshot({
         sessionManager,
         sessionFile: params.sessionFile,
@@ -1661,6 +1672,7 @@ async function compactEmbeddedAgentSessionDirectOnce(
             firstKeptEntryId: effectiveFirstKeptEntryId,
             tokensBefore: observedTokenCount ?? result.tokensBefore,
             tokensAfter,
+            reasonText: compactionReasonText,
             sessionFile: activeSessionFile,
             leafId: activePostLeafId,
             createdAt: compactStartedAt,

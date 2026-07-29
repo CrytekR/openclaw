@@ -357,6 +357,63 @@ function readProjectedTokenBreakdown(value: unknown): ProjectedTokenBreakdown | 
   };
 }
 
+/** Merge a durable UI reason into compaction entry details without dropping harness fields. */
+export function mergeCompactionReasonTextIntoDetails(
+  details: unknown,
+  reasonText: string,
+): unknown {
+  const trimmed = reasonText.trim();
+  if (!trimmed) {
+    return details;
+  }
+  if (details && typeof details === "object" && !Array.isArray(details)) {
+    return { ...(details as Record<string, unknown>), reasonText: trimmed };
+  }
+  if (details === undefined) {
+    return { reasonText: trimmed };
+  }
+  return { value: details, reasonText: trimmed };
+}
+
+/** Read a previously persisted compaction trigger reason from entry details. */
+export function readCompactionReasonTextFromDetails(details: unknown): string | undefined {
+  if (!details || typeof details !== "object" || Array.isArray(details)) {
+    return undefined;
+  }
+  const reasonText = (details as Record<string, unknown>).reasonText;
+  if (typeof reasonText !== "string") {
+    return undefined;
+  }
+  const trimmed = reasonText.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
+/**
+ * Prefer an explicit reasonText; otherwise derive a short label from the compact
+ * trigger fields that every compaction entry point already carries.
+ */
+export function resolveCompactionPersistReasonText(params: {
+  reasonText?: string;
+  trigger?: "budget" | "overflow" | "manual";
+  preflightCompactionTrigger?: "tokens" | "transcript_bytes";
+}): string | undefined {
+  const explicit = params.reasonText?.trim();
+  if (explicit) {
+    return explicit;
+  }
+  return formatCompactionTriggerReason({
+    trigger:
+      params.preflightCompactionTrigger ??
+      (params.trigger === "overflow"
+        ? "overflow"
+        : params.trigger === "manual"
+          ? "manual"
+          : params.trigger === "budget"
+            ? "budget"
+            : undefined),
+  });
+}
+
 /** Builds a short human-readable reason suffix for compaction notices and UI. */
 export function formatCompactionTriggerReason(
   details?: CompactionTriggerDetails,

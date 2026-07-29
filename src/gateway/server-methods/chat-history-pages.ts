@@ -73,9 +73,14 @@ export function enrichChatHistoryCompactionMarkers(
     }
     const tokensBefore = checkpoint.tokensBefore;
     const tokensAfter = checkpoint.tokensAfter;
+    const reasonText =
+      typeof checkpoint.reasonText === "string" && checkpoint.reasonText.trim()
+        ? checkpoint.reasonText.trim()
+        : undefined;
     if (
       (typeof tokensBefore !== "number" || !Number.isFinite(tokensBefore)) &&
-      (typeof tokensAfter !== "number" || !Number.isFinite(tokensAfter))
+      (typeof tokensAfter !== "number" || !Number.isFinite(tokensAfter)) &&
+      !reasonText
     ) {
       return message;
     }
@@ -88,6 +93,7 @@ export function enrichChatHistoryCompactionMarkers(
           ? { tokensBefore }
           : {}),
         ...(typeof tokensAfter === "number" && Number.isFinite(tokensAfter) ? { tokensAfter } : {}),
+        ...(reasonText && typeof metadata.reasonText !== "string" ? { reasonText } : {}),
       },
     };
   });

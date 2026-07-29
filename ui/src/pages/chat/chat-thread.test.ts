@@ -2819,6 +2819,32 @@ describe("buildCachedChatItems", () => {
       metric: "saved 875.3k tokens",
     });
   });
+
+  it("shows the durable compaction trigger reason on the divider", () => {
+    const items = buildCachedChatItems(
+      createProps({
+        messages: [
+          {
+            role: "system",
+            timestamp: 2_000,
+            __openclaw: {
+              kind: "compaction",
+              id: "checkpoint-with-reason",
+              reasonText:
+                "token budget: projected 176k = 160k context meter + 12k previous reply + 4k this message ≥ 176k",
+            },
+          },
+        ],
+      }),
+    );
+
+    expect(items[0]).toMatchObject({
+      kind: "divider",
+      label: "Compacted history",
+      description:
+        "token budget: projected 176k = 160k context meter + 12k previous reply + 4k this message ≥ 176k",
+    });
+  });
 });
 
 describe("tool expansion state", () => {
