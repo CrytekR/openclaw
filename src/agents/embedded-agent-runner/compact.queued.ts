@@ -34,7 +34,11 @@ import { ensureRuntimePluginsLoaded } from "../runtime-plugins.js";
 import { SessionManager } from "../sessions/index.js";
 import { DEFERRED_CONTEXT_ENGINE_COMPACTION_REASON } from "./compact-reasons.js";
 import type { CompactEmbeddedAgentSessionParams } from "./compact.types.js";
-import { compactionCheckpointStore, persistCompactionCheckpoint } from "./compaction-checkpoint.js";
+import {
+  compactionCheckpointStore,
+  persistCompactionCheckpoint,
+  resolveEmbeddedCompactionReasonText,
+} from "./compaction-checkpoint.js";
 import { asCompactionHookRunner, runPostCompactionSideEffects } from "./compaction-hooks.js";
 import {
   buildEmbeddedCompactionRuntimeContext,
@@ -698,6 +702,11 @@ async function compactResolvedContextEngine(
             firstKeptEntryId: result.result?.firstKeptEntryId,
             tokensBefore: result.result?.tokensBefore,
             tokensAfter: result.result?.tokensAfter,
+            reasonText: resolveEmbeddedCompactionReasonText({
+              reasonText: params.reasonText,
+              trigger: params.trigger,
+              preflightCompactionTrigger: params.preflightCompactionTrigger,
+            }),
             sessionFile: postCompactionSessionFile,
             leafId: postCompactionLeafId,
           });

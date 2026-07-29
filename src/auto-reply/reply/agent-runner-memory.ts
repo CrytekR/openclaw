@@ -63,6 +63,7 @@ import {
 } from "./agent-runner-utils.js";
 import {
   buildCompactionAgentEventData,
+  formatCompactionTriggerReason,
   resolveEffectivePromptTokens,
   resolveProjectedTokenProjection,
   type CompactionNoticePhase,
@@ -1048,6 +1049,7 @@ export async function runPreflightCompactionIfNeeded(params: {
       forcePreflight: true,
       preflightRequired: true,
       preflightCompactionTrigger: compactionTrigger,
+      reasonText: formatCompactionTriggerReason(compactionDetails),
       deferOwningContextEngineCompaction: false,
       contextTokenBudget: contextWindowTokens,
       currentTokenCount: tokenCountForCompaction ?? freshPersistedTokens,

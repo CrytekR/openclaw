@@ -5,7 +5,10 @@ import {
   formatCompactionNoticeText,
   formatCompactionTriggerReason,
   formatProjectedTokenExpression,
+  mergeCompactionReasonTextIntoDetails,
+  readCompactionReasonTextFromDetails,
   readCompactionTriggerDetails,
+  resolveCompactionPersistReasonText,
   resolveProjectedTokenProjection,
 } from "./compaction-notice.js";
 
@@ -42,6 +45,32 @@ describe("compaction notice trigger details", () => {
     ).toBe(
       "🧹 Compacting context (token budget: projected 181k = 170k chat-log recount via last model usage + 10k previous reply + 500 this message ≥ 176k)...",
     );
+  });
+
+  it("merges and reads durable reasonText on compaction entry details", () => {
+    expect(mergeCompactionReasonTextIntoDetails({ readFiles: ["a.ts"] }, "token budget")).toEqual({
+      readFiles: ["a.ts"],
+      reasonText: "token budget",
+    });
+    expect(mergeCompactionReasonTextIntoDetails(undefined, "manual")).toEqual({
+      reasonText: "manual",
+    });
+    expect(
+      readCompactionReasonTextFromDetails({
+        reasonText: " context overflow ",
+      }),
+    ).toBe("context overflow");
+    expect(
+      resolveCompactionPersistReasonText({
+        trigger: "overflow",
+      }),
+    ).toBe("context overflow");
+    expect(
+      resolveCompactionPersistReasonText({
+        reasonText: "token budget: projected 10k ≥ 9k",
+        trigger: "manual",
+      }),
+    ).toBe("token budget: projected 10k ≥ 9k");
   });
 
   it("formats transcript-byte reasons", () => {

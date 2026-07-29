@@ -111,6 +111,8 @@ type PersistSessionCompactionCheckpointParams = {
   firstKeptEntryId?: string;
   tokensBefore?: number;
   tokensAfter?: number;
+  /** Human-readable trigger reason for Control UI compaction dividers. */
+  reasonText?: string;
   postSessionFile?: string;
   postLeafId?: string;
   postEntryId?: string;
@@ -884,6 +886,7 @@ async function persistSessionCompactionCheckpoint(
     key: params.sessionKey,
   });
   const createdAt = params.createdAt ?? Date.now();
+  const reasonText = params.reasonText?.trim();
   const checkpoint: SessionCompactionCheckpoint = {
     checkpointId: randomUUID(),
     sessionKey: target.canonicalKey,
@@ -892,6 +895,7 @@ async function persistSessionCompactionCheckpoint(
     reason: params.reason,
     ...(typeof params.tokensBefore === "number" ? { tokensBefore: params.tokensBefore } : {}),
     ...(typeof params.tokensAfter === "number" ? { tokensAfter: params.tokensAfter } : {}),
+    ...(reasonText ? { reasonText } : {}),
     ...(params.summary?.trim() ? { summary: params.summary.trim() } : {}),
     ...(params.firstKeptEntryId?.trim()
       ? { firstKeptEntryId: params.firstKeptEntryId.trim() }

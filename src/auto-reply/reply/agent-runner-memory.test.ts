@@ -1329,6 +1329,7 @@ describe("runMemoryFlushIfNeeded", () => {
       forcePreflight: true,
       preflightRequired: true,
       preflightCompactionTrigger: "tokens",
+      reasonText: expect.stringContaining("token budget"),
       deferOwningContextEngineCompaction: false,
       contextTokenBudget: 100,
       agentHarnessId: "openclaw",
@@ -2617,6 +2618,7 @@ describe("runMemoryFlushIfNeeded", () => {
     const compactCall = requireCompactEmbeddedAgentSessionCall();
     expect(compactCall.trigger).toBe("budget");
     expect(compactCall.preflightCompactionTrigger).toBe("transcript_bytes");
+    expect(compactCall.reasonText).toEqual(expect.stringContaining("transcript size limit"));
   });
 
   it("forces memory flush when a SQLite-backed transcript exceeds the byte threshold", async () => {

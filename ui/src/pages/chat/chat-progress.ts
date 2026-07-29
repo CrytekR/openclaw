@@ -29,6 +29,10 @@ export function buildCompactionDividerItem(
     tokensBefore > tokensAfter
       ? Math.floor(tokensBefore - tokensAfter)
       : null;
+  const reasonText =
+    typeof marker.reasonText === "string" && marker.reasonText.trim()
+      ? marker.reasonText.trim()
+      : undefined;
   return {
     kind: "divider",
     key:
@@ -43,7 +47,9 @@ export function buildCompactionDividerItem(
             count: formatCompactTokenCount(tokensSaved),
           }),
         }),
-    description: t("chat.compaction.description"),
+    // Prefer the durable trigger reason when present; fall back to the generic
+    // checkpoint hint for older markers that only recorded token savings.
+    description: reasonText ?? t("chat.compaction.description"),
     action: { kind: "session-checkpoints", label: t("chat.compaction.openCheckpoints") },
     timestamp,
   };
