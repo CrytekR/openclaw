@@ -36,10 +36,11 @@ describe("compaction notice trigger details", () => {
           baseTokens: 170_000,
           lastOutputTokens: 10_000,
           promptEstimateTokens: 500,
+          recountMethod: "last_model_usage",
         },
       }),
     ).toBe(
-      "🧹 Compacting context (token budget: projected 181k = 170k chat-log recount + 10k previous reply + 500 this message ≥ 176k)...",
+      "🧹 Compacting context (token budget: projected 181k = 170k chat-log recount via last model usage + 10k previous reply + 500 this message ≥ 176k)...",
     );
   });
 
@@ -64,6 +65,7 @@ describe("compaction notice trigger details", () => {
         baseTokens: 10_000,
         lastOutputTokens: 2_000,
         promptEstimateTokens: 345,
+        recountMethod: "recent_messages_estimate",
       },
     });
     expect(data).toMatchObject({
@@ -77,9 +79,10 @@ describe("compaction notice trigger details", () => {
         baseTokens: 10_000,
         lastOutputTokens: 2_000,
         promptEstimateTokens: 345,
+        recountMethod: "recent_messages_estimate",
       },
       reasonText:
-        "token budget: projected 12k = 10k chat-log recount + 2k previous reply + 345 this message ≥ 10k",
+        "token budget: projected 12k = 10k chat-log recount via recent messages estimate + 2k previous reply + 345 this message ≥ 10k",
     });
     expect(readCompactionTriggerDetails(data)).toEqual({
       trigger: "tokens",
@@ -91,6 +94,7 @@ describe("compaction notice trigger details", () => {
         baseTokens: 10_000,
         lastOutputTokens: 2_000,
         promptEstimateTokens: 345,
+        recountMethod: "recent_messages_estimate",
       },
     });
   });
@@ -103,6 +107,7 @@ describe("compaction notice trigger details", () => {
         freshPersistedTokens: 90_000,
         persistedPromptTokens: 80_000,
         promptEstimateTokens: 2_000,
+        transcriptRecountMethod: "model_usage_plus_unread_tail",
       }),
     ).toEqual({
       projectedTokens: 107_000,
@@ -111,6 +116,7 @@ describe("compaction notice trigger details", () => {
         baseTokens: 100_000,
         lastOutputTokens: 5_000,
         promptEstimateTokens: 2_000,
+        recountMethod: "model_usage_plus_unread_tail",
       },
     });
     expect(
@@ -121,9 +127,12 @@ describe("compaction notice trigger details", () => {
           baseTokens: 100_000,
           lastOutputTokens: 5_000,
           promptEstimateTokens: 2_000,
+          recountMethod: "model_usage_plus_unread_tail",
         },
       }),
-    ).toBe("107k = 100k chat-log recount + 5k previous reply + 2k this message");
+    ).toBe(
+      "107k = 100k chat-log recount via model usage + unread tail + 5k previous reply + 2k this message",
+    );
   });
 
   it("labels base-only projections with a plain-language source", () => {
@@ -145,6 +154,16 @@ describe("compaction notice trigger details", () => {
         },
       }),
     ).toBe("150k (150k saved context floor)");
+    expect(
+      formatProjectedTokenExpression({
+        projectedTokens: 140_000,
+        breakdown: {
+          source: "transcript_usage",
+          baseTokens: 140_000,
+          recountMethod: "chat_log_file_size",
+        },
+      }),
+    ).toBe("140k (140k chat-log recount via chat-log size ÷ 4)");
   });
 
   it("keeps legacy notice text when no details are provided", () => {
