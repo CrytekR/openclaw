@@ -1253,10 +1253,10 @@ function resolveCompactionStatusReason(status: CompactionStatus): string | null 
         }
         const source =
           breakdown.source === "transcript_usage"
-            ? "transcript"
+            ? "chat-log recount"
             : breakdown.source === "fresh_persisted"
-              ? "fresh-session"
-              : "persisted";
+              ? "context meter"
+              : "saved context floor";
         const base = formatCompactTokenCount(breakdown.baseTokens);
         const lastOutput =
           typeof breakdown.lastOutputTokens === "number" && breakdown.lastOutputTokens > 0
@@ -1266,16 +1266,16 @@ function resolveCompactionStatusReason(status: CompactionStatus): string | null 
           typeof breakdown.promptEstimateTokens === "number" && breakdown.promptEstimateTokens > 0
             ? formatCompactTokenCount(breakdown.promptEstimateTokens)
             : undefined;
-        const baseTerm = `${base} base(${source})`;
+        const baseTerm = `${base} ${source}`;
         if (!lastOutput && !promptEstimate) {
           return `${projected} (${baseTerm})`;
         }
         const parts = [baseTerm];
         if (lastOutput) {
-          parts.push(`${lastOutput} last-out`);
+          parts.push(`${lastOutput} previous reply`);
         }
         if (promptEstimate) {
-          parts.push(`${promptEstimate} prompt`);
+          parts.push(`${promptEstimate} this message`);
         }
         return `${projected} = ${parts.join(" + ")}`;
       })();

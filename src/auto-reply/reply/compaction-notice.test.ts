@@ -24,7 +24,7 @@ describe("compaction notice trigger details", () => {
         },
       }),
     ).toBe(
-      "token budget: projected 176k = 160k base(fresh-session) + 12k last-out + 4k prompt ≥ 176k",
+      "token budget: projected 176k = 160k context meter + 12k previous reply + 4k this message ≥ 176k",
     );
     expect(
       formatCompactionNoticeText("start", {
@@ -39,7 +39,7 @@ describe("compaction notice trigger details", () => {
         },
       }),
     ).toBe(
-      "🧹 Compacting context (token budget: projected 181k = 170k base(transcript) + 10k last-out + 500 prompt ≥ 176k)...",
+      "🧹 Compacting context (token budget: projected 181k = 170k chat-log recount + 10k previous reply + 500 this message ≥ 176k)...",
     );
   });
 
@@ -79,7 +79,7 @@ describe("compaction notice trigger details", () => {
         promptEstimateTokens: 345,
       },
       reasonText:
-        "token budget: projected 12k = 10k base(transcript) + 2k last-out + 345 prompt ≥ 10k",
+        "token budget: projected 12k = 10k chat-log recount + 2k previous reply + 345 this message ≥ 10k",
     });
     expect(readCompactionTriggerDetails(data)).toEqual({
       trigger: "tokens",
@@ -123,10 +123,10 @@ describe("compaction notice trigger details", () => {
           promptEstimateTokens: 2_000,
         },
       }),
-    ).toBe("107k = 100k base(transcript) + 5k last-out + 2k prompt");
+    ).toBe("107k = 100k chat-log recount + 5k previous reply + 2k this message");
   });
 
-  it("labels base-only projections with the base source type", () => {
+  it("labels base-only projections with a plain-language source", () => {
     expect(
       formatProjectedTokenExpression({
         projectedTokens: 160_000,
@@ -135,7 +135,16 @@ describe("compaction notice trigger details", () => {
           baseTokens: 160_000,
         },
       }),
-    ).toBe("160k (160k base(fresh-session))");
+    ).toBe("160k (160k context meter)");
+    expect(
+      formatProjectedTokenExpression({
+        projectedTokens: 150_000,
+        breakdown: {
+          source: "persisted",
+          baseTokens: 150_000,
+        },
+      }),
+    ).toBe("150k (150k saved context floor)");
   });
 
   it("keeps legacy notice text when no details are provided", () => {

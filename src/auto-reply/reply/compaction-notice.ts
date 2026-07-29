@@ -13,9 +13,9 @@ export type CompactionNoticePhase =
 
 /**
  * Which candidate won the preflight projected-token max().
- * - transcript_usage: transcript usage/estimate base + last output + prompt estimate
- * - fresh_persisted: session totalTokensFresh base + last output + prompt estimate
- * - persisted: raw persisted totalTokens floor (no additive terms)
+ * - transcript_usage: recount from the session transcript (may differ from the UI meter)
+ * - fresh_persisted: same fresh session totalTokens snapshot as the UI context meter
+ * - persisted: saved session totalTokens used as a floor without reply/prompt additives
  */
 export type ProjectedTokenSource = "transcript_usage" | "fresh_persisted" | "persisted";
 
@@ -135,11 +135,14 @@ function resolveCompactionTriggerLabel(details?: CompactionTriggerDetails): stri
 function resolveProjectedTokenSourceLabel(source: ProjectedTokenSource): string {
   switch (source) {
     case "transcript_usage":
-      return "transcript";
+      // Recomputed from the session transcript; may differ from the UI meter.
+      return "chat-log recount";
     case "fresh_persisted":
-      return "fresh-session";
+      // Same persisted prompt/context snapshot the Control UI context meter shows.
+      return "context meter";
     case "persisted":
-      return "persisted";
+      // Saved session total used as a floor without adding reply/prompt estimates.
+      return "saved context floor";
   }
 }
 
@@ -265,18 +268,18 @@ export function formatProjectedTokenExpression(params: {
     typeof breakdown.promptEstimateTokens === "number" && breakdown.promptEstimateTokens > 0
       ? formatCompactTokenCount(breakdown.promptEstimateTokens)
       : undefined;
-  // Keep the base source on the base term so operators can tell why it may
-  // differ from the Control UI context meter (session totalTokens snapshot).
-  const baseTerm = `${base} base(${source})`;
+  // Spell out what each term means so the indicator is readable without
+  // knowing internal source ids (fresh_persisted / transcript_usage / persisted).
+  const baseTerm = `${base} ${source}`;
   if (!lastOutput && !promptEstimate) {
     return `${projected} (${baseTerm})`;
   }
   const parts = [baseTerm];
   if (lastOutput) {
-    parts.push(`${lastOutput} last-out`);
+    parts.push(`${lastOutput} previous reply`);
   }
   if (promptEstimate) {
-    parts.push(`${promptEstimate} prompt`);
+    parts.push(`${promptEstimate} this message`);
   }
   return `${projected} = ${parts.join(" + ")}`;
 }

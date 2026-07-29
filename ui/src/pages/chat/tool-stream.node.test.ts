@@ -853,7 +853,7 @@ describe("app-tool-stream fallback lifecycle handling", () => {
           promptEstimateTokens: 4_000,
         },
         reasonText:
-          "token budget: projected 176k = 160k base(fresh-session) + 12k last-out + 4k prompt ≥ 176k",
+          "token budget: projected 176k = 160k context meter + 12k previous reply + 4k this message ≥ 176k",
       }),
     );
 
@@ -869,7 +869,7 @@ describe("app-tool-stream fallback lifecycle handling", () => {
         promptEstimateTokens: 4_000,
       },
       reasonText:
-        "token budget: projected 176k = 160k base(fresh-session) + 12k last-out + 4k prompt ≥ 176k",
+        "token budget: projected 176k = 160k context meter + 12k previous reply + 4k this message ≥ 176k",
     });
 
     handleAgentEvent(
@@ -895,7 +895,7 @@ describe("app-tool-stream fallback lifecycle handling", () => {
         promptEstimateTokens: 4_000,
       },
       reasonText:
-        "token budget: projected 176k = 160k base(fresh-session) + 12k last-out + 4k prompt ≥ 176k",
+        "token budget: projected 176k = 160k context meter + 12k previous reply + 4k this message ≥ 176k",
     });
 
     handleAgentEvent(
@@ -921,7 +921,7 @@ describe("app-tool-stream fallback lifecycle handling", () => {
         promptEstimateTokens: 4_000,
       },
       reasonText:
-        "token budget: projected 176k = 160k base(fresh-session) + 12k last-out + 4k prompt ≥ 176k",
+        "token budget: projected 176k = 160k context meter + 12k previous reply + 4k this message ≥ 176k",
     });
 
     vi.useRealTimers();
