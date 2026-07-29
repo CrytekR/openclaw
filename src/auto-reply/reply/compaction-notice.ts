@@ -7,6 +7,40 @@ import type { ReplyPayload } from "../types.js";
 export type CompactionNoticePhase = "start" | "end" | "incomplete" | "skipped";
 
 /**
+ * Which candidate won the preflight projected-token max().
+ * - transcript_usage: recount from the session transcript (may differ from the UI meter)
+ * - fresh_persisted: same fresh session totalTokens snapshot as the UI context meter
+ * - persisted: saved session totalTokens used as a floor without reply/prompt additives
+ */
+export type ProjectedTokenSource = "transcript_usage" | "fresh_persisted" | "persisted";
+
+/**
+ * Which transcript recount algorithm produced the chat-log base on 2026.6.11.
+ * - last_model_usage: latest provider usage prompt tokens
+ * - model_usage_plus_unread_tail: usage prompt + unread trailing bytes/4
+ * - recent_messages_estimate: estimateMessagesTokens over recent transcript messages
+ * - chat_log_file_size: ceil(transcript bytes / 4)
+ */
+export type TranscriptRecountMethod =
+  | "last_model_usage"
+  | "model_usage_plus_unread_tail"
+  | "recent_messages_estimate"
+  | "chat_log_file_size";
+
+/** Additive terms that produced the winning projected-token count. */
+export type ProjectedTokenBreakdown = {
+  source: ProjectedTokenSource;
+  /** Prompt/context base before adding the last completion and current prompt. */
+  baseTokens: number;
+  /** Previous assistant completion tokens, when used in the projection. */
+  lastOutputTokens?: number;
+  /** Estimated tokens for the current user prompt, when used in the projection. */
+  promptEstimateTokens?: number;
+  /** Specific chat-log recount algorithm when source is transcript_usage. */
+  recountMethod?: TranscriptRecountMethod;
+};
+
+/**
  * Structured compaction trigger details for notices and Control UI agent events.
  * Adapted for 2026.6.11 trigger surfaces:
  * - preflight: tokens | transcript_bytes (compact API still uses trigger "budget")
@@ -18,6 +52,8 @@ export type CompactionTriggerDetails = {
   reason?: "manual" | "threshold" | "overflow";
   /** Next-turn projected prompt tokens used for the token-budget gate. */
   projectedTokens?: number;
+  /** How projectedTokens was computed when the token-budget gate fired. */
+  projectedBreakdown?: ProjectedTokenBreakdown;
   /** Token-budget compaction threshold (contextWindow - reserve - soft). */
   threshold?: number;
   /** Active transcript byte size when the size gate fired. */
@@ -51,6 +87,22 @@ function formatCompactByteCount(bytes: number): string {
   return `${safe}B`;
 }
 
+function readNonNegativeTokenCount(value: unknown): number | undefined {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+    return undefined;
+  }
+  return Math.floor(value);
+}
+
+function readTranscriptRecountMethod(value: unknown): TranscriptRecountMethod | undefined {
+  return value === "last_model_usage" ||
+    value === "model_usage_plus_unread_tail" ||
+    value === "recent_messages_estimate" ||
+    value === "chat_log_file_size"
+    ? value
+    : undefined;
+}
+
 function resolveCompactionTriggerLabel(details?: CompactionTriggerDetails): string | undefined {
   const trigger = details?.trigger ?? details?.reason;
   switch (trigger) {
@@ -71,6 +123,195 @@ function resolveCompactionTriggerLabel(details?: CompactionTriggerDetails): stri
   }
 }
 
+function resolveProjectedTokenSourceLabel(source: ProjectedTokenSource): string {
+  switch (source) {
+    case "transcript_usage":
+      // Recomputed from the session transcript; may differ from the UI meter.
+      return "chat-log recount";
+    case "fresh_persisted":
+      // Same persisted prompt/context snapshot the Control UI context meter shows.
+      return "context meter";
+    case "persisted":
+      // Saved session total used as a floor without adding reply/prompt estimates.
+      return "saved context floor";
+  }
+}
+
+function resolveTranscriptRecountMethodLabel(method: TranscriptRecountMethod): string {
+  switch (method) {
+    case "last_model_usage":
+      return "last model usage";
+    case "model_usage_plus_unread_tail":
+      return "model usage + unread tail";
+    case "recent_messages_estimate":
+      return "recent messages estimate";
+    case "chat_log_file_size":
+      return "chat-log size ÷ 4";
+  }
+}
+
+/**
+ * Pick the winning projected-token candidate and explain its additive terms.
+ * Mirrors 2026.6.11 preflight: max(usageProjected, freshProjected, persistedFloor).
+ */
+export function resolveProjectedTokenProjection(params: {
+  transcriptPromptTokens?: number;
+  transcriptOutputTokens?: number;
+  transcriptRecountMethod?: TranscriptRecountMethod;
+  freshPersistedTokens?: number;
+  persistedPromptTokens?: number;
+  promptEstimateTokens?: number;
+  resolveEffectivePromptTokens: (
+    basePromptTokens?: number,
+    lastOutputTokens?: number,
+    promptTokenEstimate?: number,
+  ) => number;
+}): { projectedTokens: number; breakdown: ProjectedTokenBreakdown } | undefined {
+  const {
+    transcriptPromptTokens,
+    transcriptOutputTokens,
+    transcriptRecountMethod,
+    freshPersistedTokens,
+    persistedPromptTokens,
+    promptEstimateTokens,
+    resolveEffectivePromptTokens,
+  } = params;
+  const usageProjected =
+    transcriptPromptTokens !== undefined
+      ? resolveEffectivePromptTokens(
+          transcriptPromptTokens,
+          transcriptOutputTokens,
+          promptEstimateTokens,
+        )
+      : undefined;
+  const freshProjected =
+    freshPersistedTokens !== undefined
+      ? resolveEffectivePromptTokens(
+          freshPersistedTokens,
+          transcriptOutputTokens,
+          promptEstimateTokens,
+        )
+      : undefined;
+  const persistedFloor =
+    persistedPromptTokens !== undefined && persistedPromptTokens > 0
+      ? persistedPromptTokens
+      : undefined;
+
+  const projectedTokens = Math.max(usageProjected ?? 0, freshProjected ?? 0, persistedFloor ?? 0);
+  if (!Number.isFinite(projectedTokens) || projectedTokens <= 0) {
+    return undefined;
+  }
+
+  // Prefer additive sources when they tie the max, so the UI can show the sum.
+  if (usageProjected === projectedTokens && transcriptPromptTokens !== undefined) {
+    return {
+      projectedTokens,
+      breakdown: {
+        source: "transcript_usage",
+        baseTokens: transcriptPromptTokens,
+        ...(transcriptOutputTokens !== undefined && transcriptOutputTokens > 0
+          ? { lastOutputTokens: transcriptOutputTokens }
+          : {}),
+        ...(promptEstimateTokens !== undefined && promptEstimateTokens > 0
+          ? { promptEstimateTokens }
+          : {}),
+        ...(transcriptRecountMethod ? { recountMethod: transcriptRecountMethod } : {}),
+      },
+    };
+  }
+  if (freshProjected === projectedTokens && freshPersistedTokens !== undefined) {
+    return {
+      projectedTokens,
+      breakdown: {
+        source: "fresh_persisted",
+        baseTokens: freshPersistedTokens,
+        ...(transcriptOutputTokens !== undefined && transcriptOutputTokens > 0
+          ? { lastOutputTokens: transcriptOutputTokens }
+          : {}),
+        ...(promptEstimateTokens !== undefined && promptEstimateTokens > 0
+          ? { promptEstimateTokens }
+          : {}),
+      },
+    };
+  }
+  return {
+    projectedTokens,
+    breakdown: {
+      source: "persisted",
+      baseTokens: persistedPromptTokens ?? projectedTokens,
+    },
+  };
+}
+
+/** Formats the winning projected-token expression for notices and UI. */
+export function formatProjectedTokenExpression(params: {
+  projectedTokens: number;
+  breakdown?: ProjectedTokenBreakdown;
+}): string {
+  const projected = formatCompactTokenCount(params.projectedTokens);
+  const breakdown = params.breakdown;
+  if (!breakdown) {
+    return projected;
+  }
+  const source = resolveProjectedTokenSourceLabel(breakdown.source);
+  const recountMethod =
+    breakdown.source === "transcript_usage" && breakdown.recountMethod
+      ? resolveTranscriptRecountMethodLabel(breakdown.recountMethod)
+      : undefined;
+  const sourceLabel = recountMethod ? `${source} via ${recountMethod}` : source;
+  const base = formatCompactTokenCount(breakdown.baseTokens);
+  const lastOutput =
+    typeof breakdown.lastOutputTokens === "number" && breakdown.lastOutputTokens > 0
+      ? formatCompactTokenCount(breakdown.lastOutputTokens)
+      : undefined;
+  const promptEstimate =
+    typeof breakdown.promptEstimateTokens === "number" && breakdown.promptEstimateTokens > 0
+      ? formatCompactTokenCount(breakdown.promptEstimateTokens)
+      : undefined;
+  // Spell out what each term means so the indicator is readable without
+  // knowing internal source ids (fresh_persisted / transcript_usage / persisted).
+  const baseTerm = `${base} ${sourceLabel}`;
+  if (!lastOutput && !promptEstimate) {
+    return `${projected} (${baseTerm})`;
+  }
+  const parts = [baseTerm];
+  if (lastOutput) {
+    parts.push(`${lastOutput} previous reply`);
+  }
+  if (promptEstimate) {
+    parts.push(`${promptEstimate} this message`);
+  }
+  return `${projected} = ${parts.join(" + ")}`;
+}
+
+export function readProjectedTokenBreakdown(value: unknown): ProjectedTokenBreakdown | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+  const record = value as Record<string, unknown>;
+  const sourceRaw = typeof record.source === "string" ? record.source : undefined;
+  const source =
+    sourceRaw === "transcript_usage" || sourceRaw === "fresh_persisted" || sourceRaw === "persisted"
+      ? sourceRaw
+      : undefined;
+  const baseTokens = readNonNegativeTokenCount(record.baseTokens);
+  if (!source || baseTokens === undefined) {
+    return undefined;
+  }
+  const lastOutputTokens = readNonNegativeTokenCount(record.lastOutputTokens);
+  const promptEstimateTokens = readNonNegativeTokenCount(record.promptEstimateTokens);
+  const recountMethod = readTranscriptRecountMethod(record.recountMethod);
+  return {
+    source,
+    baseTokens,
+    ...(lastOutputTokens !== undefined && lastOutputTokens > 0 ? { lastOutputTokens } : {}),
+    ...(promptEstimateTokens !== undefined && promptEstimateTokens > 0
+      ? { promptEstimateTokens }
+      : {}),
+    ...(source === "transcript_usage" && recountMethod ? { recountMethod } : {}),
+  };
+}
+
 /** Builds a short human-readable reason suffix for compaction notices and UI. */
 export function formatCompactionTriggerReason(
   details?: CompactionTriggerDetails,
@@ -85,7 +326,10 @@ export function formatCompactionTriggerReason(
     Number.isFinite(details.projectedTokens) &&
     details.projectedTokens > 0
   ) {
-    const projected = formatCompactTokenCount(details.projectedTokens);
+    const projected = formatProjectedTokenExpression({
+      projectedTokens: details.projectedTokens,
+      breakdown: details.projectedBreakdown,
+    });
     if (
       typeof details.threshold === "number" &&
       Number.isFinite(details.threshold) &&
@@ -157,6 +401,9 @@ export function buildCompactionAgentEventData(
     details.projectedTokens > 0
   ) {
     data.projectedTokens = Math.floor(details.projectedTokens);
+  }
+  if (details?.projectedBreakdown) {
+    data.projectedBreakdown = details.projectedBreakdown;
   }
   if (
     typeof details?.threshold === "number" &&

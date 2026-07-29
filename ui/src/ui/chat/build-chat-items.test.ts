@@ -1119,7 +1119,8 @@ describe("buildChatItems", () => {
             __openclaw: {
               kind: "compaction",
               id: "checkpoint-with-reason",
-              reasonText: "token budget: projected 176k ≥ 160k",
+              reasonText:
+                "token budget: projected 176k = 160k context meter + 12k previous reply + 4.0k this message ≥ 160k",
             },
           },
         ],
@@ -1129,7 +1130,8 @@ describe("buildChatItems", () => {
     expect(items[0]).toMatchObject({
       kind: "divider",
       label: "Compacted history",
-      description: "token budget: projected 176k ≥ 160k",
+      description:
+        "token budget: projected 176k = 160k context meter + 12k previous reply + 4.0k this message ≥ 160k",
     });
   });
 });

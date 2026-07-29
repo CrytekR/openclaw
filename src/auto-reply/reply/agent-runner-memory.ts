@@ -50,8 +50,10 @@ import {
 import {
   buildCompactionAgentEventData,
   formatCompactionTriggerReason,
+  resolveProjectedTokenProjection,
   type CompactionNoticePhase,
   type CompactionTriggerDetails,
+  type TranscriptRecountMethod,
 } from "./compaction-notice.js";
 import {
   hasAlreadyFlushedForCurrentCompaction,
@@ -628,6 +630,7 @@ type TranscriptTokenEstimate = {
   outputTokens?: number;
   transcriptByteSize?: number;
   transcriptBytesTokens?: number;
+  recountMethod?: TranscriptRecountMethod;
 };
 
 async function estimatePromptTokensFromSessionTranscript(params: {
@@ -678,6 +681,7 @@ async function estimatePromptTokensFromSessionTranscript(params: {
         outputTokens: Math.ceil(outputTokens),
         transcriptByteSize: snapshot.byteSize,
         transcriptBytesTokens,
+        recountMethod: "last_model_usage",
       };
     }
     const messages = (await readSessionMessagesAsync(
@@ -699,14 +703,21 @@ async function estimatePromptTokensFromSessionTranscript(params: {
     })();
     if (typeof promptTokens === "number" && Number.isFinite(promptTokens) && promptTokens > 0) {
       const usagePromptTokens = Math.ceil(promptTokens) + (trailingBytesTokens ?? 0);
+      const promptTokenCount = Math.max(usagePromptTokens, estimatedMessageTokens ?? 0);
       return {
-        promptTokens: Math.max(usagePromptTokens, estimatedMessageTokens ?? 0),
+        promptTokens: promptTokenCount,
         outputTokens:
           typeof outputTokens === "number" && Number.isFinite(outputTokens) && outputTokens > 0
             ? Math.ceil(outputTokens)
             : undefined,
         transcriptByteSize: snapshot.byteSize,
         transcriptBytesTokens,
+        recountMethod:
+          estimatedMessageTokens !== undefined && estimatedMessageTokens > usagePromptTokens
+            ? "recent_messages_estimate"
+            : (trailingBytesTokens ?? 0) > 0
+              ? "model_usage_plus_unread_tail"
+              : "last_model_usage",
       };
     }
     const estimatedTokens = estimatedMessageTokens ?? transcriptBytesTokens;
@@ -717,6 +728,8 @@ async function estimatePromptTokensFromSessionTranscript(params: {
       promptTokens: Math.ceil(estimatedTokens),
       transcriptByteSize: snapshot.byteSize,
       transcriptBytesTokens,
+      recountMethod:
+        estimatedMessageTokens !== undefined ? "recent_messages_estimate" : "chat_log_file_size",
     };
   } catch {
     return undefined;
@@ -863,6 +876,7 @@ export async function runPreflightCompactionIfNeeded(params: {
       : undefined;
   const transcriptPromptTokens = transcriptUsageTokens?.promptTokens;
   const transcriptOutputTokens = transcriptUsageTokens?.outputTokens;
+  const transcriptRecountMethod = transcriptUsageTokens?.recountMethod;
   const usageProjectedTokenCount =
     typeof transcriptPromptTokens === "number"
       ? resolveEffectivePromptTokens(
@@ -879,11 +893,22 @@ export async function runPreflightCompactionIfNeeded(params: {
           promptTokenEstimate,
         )
       : undefined;
-  const projectedTokenCount = Math.max(
-    usageProjectedTokenCount ?? 0,
-    freshProjectedTokenCount ?? 0,
-    stalePersistedPromptTokens ?? 0,
-  );
+  const projectedProjection = resolveProjectedTokenProjection({
+    transcriptPromptTokens,
+    transcriptOutputTokens,
+    transcriptRecountMethod,
+    freshPersistedTokens,
+    persistedPromptTokens: stalePersistedPromptTokens,
+    promptEstimateTokens: promptTokenEstimate,
+    resolveEffectivePromptTokens,
+  });
+  const projectedTokenCount =
+    projectedProjection?.projectedTokens ??
+    Math.max(
+      usageProjectedTokenCount ?? 0,
+      freshProjectedTokenCount ?? 0,
+      stalePersistedPromptTokens ?? 0,
+    );
   const tokenCountForCompaction =
     Number.isFinite(projectedTokenCount) && projectedTokenCount > 0
       ? projectedTokenCount
@@ -922,6 +947,9 @@ export async function runPreflightCompactionIfNeeded(params: {
     reason: "threshold",
     ...(typeof tokenCountForCompaction === "number"
       ? { projectedTokens: tokenCountForCompaction }
+      : {}),
+    ...(projectedProjection?.breakdown
+      ? { projectedBreakdown: projectedProjection.breakdown }
       : {}),
     ...(threshold > 0 ? { threshold } : {}),
     ...(typeof activeTranscriptBytes === "number" ? { activeTranscriptBytes } : {}),
