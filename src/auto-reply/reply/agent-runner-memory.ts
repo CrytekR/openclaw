@@ -996,7 +996,9 @@ export async function runPreflightCompactionIfNeeded(params: {
         emitCompactionUiEvent("start");
       } else if (phase === "end") {
         emitCompactionUiEvent("end", { completed: true });
-      } else if (phase === "incomplete") {
+      } else if (phase === "incomplete" || phase === "skipped") {
+        // Clear the Control UI active toast. Skipped must still emit end so a
+        // start that did not compact cannot stick for the stale-timeout window.
         emitCompactionUiEvent("end", { completed: false });
       }
       await params.onCompactionNotice?.(phase, compactionDetails);

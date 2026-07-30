@@ -529,6 +529,57 @@ describe("app-tool-stream fallback lifecycle handling", () => {
     expect(host.activityEntries?.at(-1)?.toolCallId).toBe(`tool-${ACTIVITY_ENTRY_LIMIT + 4}`);
   });
 
+  it("shows reasonText from compaction agent events", () => {
+    useToolStreamFakeTimers();
+    const host = createHost();
+    const reasonText =
+      "token budget: projected 176k = 160k context meter + 12k previous reply + 4.0k this message ≥ 160k";
+
+    handleAgentEvent(
+      host,
+      agentEvent("preflight-compaction:main", 1, "compaction", {
+        phase: "start",
+        trigger: "tokens",
+        projectedTokens: 176_000,
+        threshold: 160_000,
+        reasonText,
+      }),
+    );
+
+    expect(host.compactionStatus).toEqual({
+      phase: "active",
+      runId: "preflight-compaction:main",
+      startedAt: TOOL_STREAM_TEST_NOW,
+      completedAt: null,
+      reasonText,
+      trigger: "tokens",
+      projectedTokens: 176_000,
+      threshold: 160_000,
+    });
+
+    handleAgentEvent(
+      host,
+      agentEvent("preflight-compaction:main", 2, "compaction", {
+        phase: "end",
+        completed: true,
+        reasonText,
+      }),
+    );
+
+    expect(host.compactionStatus).toEqual({
+      phase: "complete",
+      runId: "preflight-compaction:main",
+      startedAt: TOOL_STREAM_TEST_NOW,
+      completedAt: TOOL_STREAM_TEST_NOW,
+      reasonText,
+      trigger: "tokens",
+      projectedTokens: 176_000,
+      threshold: 160_000,
+    });
+
+    vi.useRealTimers();
+  });
+
   it("keeps compaction in retry-pending state until the matching lifecycle end", () => {
     useToolStreamFakeTimers();
     const host = createHost();

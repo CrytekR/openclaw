@@ -1060,6 +1060,25 @@ describe("runMemoryFlushIfNeeded", () => {
     expect(incrementCompactionCountMock).not.toHaveBeenCalled();
     expect(onCompactionNotice).toHaveBeenNthCalledWith(1, "start", expect.any(Object));
     expect(onCompactionNotice).toHaveBeenNthCalledWith(2, "skipped", expect.any(Object));
+    expect(emitAgentEventMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        stream: "compaction",
+        data: expect.objectContaining({
+          phase: "start",
+          trigger: "tokens",
+          reasonText: expect.stringContaining("token budget"),
+        }),
+      }),
+    );
+    expect(emitAgentEventMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        stream: "compaction",
+        data: expect.objectContaining({
+          phase: "end",
+          completed: false,
+        }),
+      }),
+    );
   });
 
   it("fails when required preflight context-engine compaction is deferred to background maintenance", async () => {
@@ -2237,6 +2256,26 @@ describe("runMemoryFlushIfNeeded", () => {
 
     expect(onCompactionNotice).toHaveBeenNthCalledWith(1, "start", expect.any(Object));
     expect(onCompactionNotice).toHaveBeenNthCalledWith(2, "end", expect.any(Object));
+    expect(emitAgentEventMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        stream: "compaction",
+        data: expect.objectContaining({
+          phase: "start",
+          trigger: "transcript_bytes",
+          reasonText: expect.stringContaining("transcript size limit"),
+        }),
+      }),
+    );
+    expect(emitAgentEventMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        stream: "compaction",
+        data: expect.objectContaining({
+          phase: "end",
+          completed: true,
+          reasonText: expect.stringContaining("transcript size limit"),
+        }),
+      }),
+    );
   });
 
   it("emits an incomplete preflight compaction notice when post-compaction state update throws", async () => {
