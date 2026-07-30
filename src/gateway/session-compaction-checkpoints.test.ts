@@ -19,6 +19,7 @@ import {
   persistSessionCompactionCheckpoint,
   readSessionLeafStateFromTranscriptAsync,
   resolveCompactionCheckpointTranscriptPosition,
+  enrichChatHistoryCompactionMarkers,
 } from "./session-compaction-checkpoints.js";
 
 const tempDirs: string[] = [];
@@ -984,5 +985,41 @@ describe("session-compaction-checkpoints", () => {
       "old-7",
       expect.any(String),
     ]);
+  });
+
+  test("enrichChatHistoryCompactionMarkers backfills reasonText from checkpoints", () => {
+    const messages = [
+      {
+        role: "system",
+        timestamp: 1,
+        __openclaw: { kind: "compaction", id: "entry-1" },
+      },
+      {
+        role: "user",
+        timestamp: 2,
+        content: [{ type: "text", text: "hi" }],
+      },
+    ];
+    const enriched = enrichChatHistoryCompactionMarkers(messages, {
+      compactionCheckpoints: [
+        {
+          checkpointId: "cp-1",
+          sessionKey: MAIN_SESSION_KEY,
+          sessionId: TEST_SESSION_ID,
+          createdAt: 1,
+          reason: "manual",
+          reasonText: "token budget: projected 176k = 160k context meter ≥ 160k",
+          preCompaction: { sessionId: TEST_SESSION_ID },
+          postCompaction: { sessionId: TEST_SESSION_ID, entryId: "entry-1" },
+        },
+      ],
+    });
+    expect(enriched[0]).toMatchObject({
+      __openclaw: {
+        kind: "compaction",
+        id: "entry-1",
+        reasonText: "token budget: projected 176k = 160k context meter ≥ 160k",
+      },
+    });
   });
 });

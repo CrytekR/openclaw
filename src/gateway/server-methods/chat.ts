@@ -155,6 +155,7 @@ import { chatAbortMarkerTimestampMs, type ChatRunTiming } from "../server-chat-s
 import { getMaxChatHistoryMessagesBytes, MAX_PAYLOAD_BYTES } from "../server-constants.js";
 import { resolveSessionHistoryTailReadOptions } from "../session-history-state.js";
 import { persistGatewaySessionLifecycleEvent } from "../session-lifecycle-state.js";
+import { enrichChatHistoryCompactionMarkers } from "../session-compaction-checkpoints.js";
 import { readSessionTranscriptIndex } from "../session-transcript-index.fs.js";
 import {
   capArrayByJsonBytes,
@@ -2741,9 +2742,10 @@ async function handleChatHistoryRequest({
     rawMessages,
     typeof entry?.sessionStartedAt === "number" ? entry.sessionStartedAt : undefined,
   );
+  const historyMessages = enrichChatHistoryCompactionMarkers(recencyFilteredMessages, entry);
   const effectiveMaxChars = resolveEffectiveChatHistoryMaxChars(cfg, maxChars);
   const normalized = augmentChatHistoryWithCanvasBlocks(
-    projectRecentChatDisplayMessages(recencyFilteredMessages, {
+    projectRecentChatDisplayMessages(historyMessages, {
       maxChars: effectiveMaxChars,
       maxMessages: max,
     }),
