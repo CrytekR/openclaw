@@ -1,6 +1,7 @@
 /**
  * Queues embedded-agent session compaction onto the correct command lane.
  */
+import { resolveCompactionPersistReasonText } from "../../auto-reply/reply/compaction-notice.js";
 import { OPENCLAW_EMBEDDED_CONTEXT_ENGINE_HOST } from "../../context-engine/host-compat.js";
 import { ensureContextEnginesInitialized } from "../../context-engine/init.js";
 import {
@@ -478,6 +479,11 @@ export async function compactEmbeddedAgentSession(
                 preferredLeafId: postCompactionLeafId,
                 transcriptState,
               });
+              const reasonText = resolveCompactionPersistReasonText({
+                reasonText: params.reasonText,
+                trigger: params.trigger,
+                preflightCompactionTrigger: params.preflightCompactionTrigger,
+              });
               const storedCheckpoint = await compactionCheckpointStore.persistCheckpoint({
                 cfg: params.config,
                 sessionKey: params.sessionKey,
@@ -490,6 +496,7 @@ export async function compactEmbeddedAgentSession(
                 firstKeptEntryId: result.result?.firstKeptEntryId,
                 tokensBefore: result.result?.tokensBefore,
                 tokensAfter: result.result?.tokensAfter,
+                ...(reasonText ? { reasonText } : {}),
                 postSessionFile: postCompactionSessionFile,
                 postLeafId: checkpointPosition.leafId,
                 postEntryId: checkpointPosition.entryId,

@@ -1108,6 +1108,32 @@ describe("buildChatItems", () => {
     expect(action.kind).toBe("session-checkpoints");
     expect(action.label).toBe("Open checkpoints");
   });
+
+  it("shows the durable compaction trigger reason on the divider", () => {
+    const items = buildChatItems(
+      createProps({
+        messages: [
+          {
+            role: "system",
+            timestamp: 2_000,
+            __openclaw: {
+              kind: "compaction",
+              id: "checkpoint-with-reason",
+              reasonText:
+                "token budget: projected 176k = 160k context meter + 12k previous reply + 4.0k this message ≥ 160k",
+            },
+          },
+        ],
+      }),
+    );
+
+    expect(items[0]).toMatchObject({
+      kind: "divider",
+      label: "Compacted history",
+      description:
+        "token budget: projected 176k = 160k context meter + 12k previous reply + 4.0k this message ≥ 160k",
+    });
+  });
 });
 
 function canvasBlocksIn(group: MessageGroup): unknown[] {

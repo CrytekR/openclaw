@@ -276,3 +276,61 @@ describe("reconcileChatRunFromCurrentSessionRow stale-active suppression (#87875
     expect(rowActive(host)).toBe(false);
   });
 });
+
+describe("reconcileChatRunLifecycle compaction toast retention", () => {
+  it("keeps a completed preflight compaction toast when the chat run ends", () => {
+    const host = makeHost({
+      chatRunId: "chat-run-1",
+      compactionStatus: {
+        phase: "complete",
+        runId: "preflight-compaction:agent:main:main",
+        startedAt: 100,
+        completedAt: Date.now(),
+        reasonText: "token budget: projected 176k ≥ 160k",
+      },
+      compactionClearTimer: setTimeout(() => undefined, 5_000),
+    });
+
+    reconcileChatRunLifecycle(host, {
+      outcome: "done",
+      sessionStatus: "done",
+      runId: "chat-run-1",
+      sessionKey: "s1",
+      clearLocalRun: true,
+      clearChatStream: true,
+    });
+
+    expect(host.compactionStatus).toMatchObject({
+      phase: "complete",
+      runId: "preflight-compaction:agent:main:main",
+      reasonText: "token budget: projected 176k ≥ 160k",
+    });
+    expect(host.compactionClearTimer).not.toBeNull();
+  });
+
+  it("keeps an in-flight preflight compaction toast for a different runId", () => {
+    const host = makeHost({
+      chatRunId: "chat-run-1",
+      compactionStatus: {
+        phase: "active",
+        runId: "preflight-compaction:agent:main:main",
+        startedAt: 100,
+        completedAt: null,
+        reasonText: "token budget: projected 176k ≥ 160k",
+      },
+    });
+
+    reconcileChatRunLifecycle(host, {
+      outcome: "done",
+      sessionStatus: "done",
+      runId: "chat-run-1",
+      sessionKey: "s1",
+      clearLocalRun: true,
+    });
+
+    expect(host.compactionStatus).toMatchObject({
+      phase: "active",
+      runId: "preflight-compaction:agent:main:main",
+    });
+  });
+});

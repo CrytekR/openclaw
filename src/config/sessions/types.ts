@@ -82,6 +82,8 @@ export type SessionCompactionCheckpoint = {
   reason: SessionCompactionCheckpointReason;
   tokensBefore?: number;
   tokensAfter?: number;
+  /** Human-readable trigger reason shown on Control UI compaction dividers. */
+  reasonText?: string;
   summary?: string;
   firstKeptEntryId?: string;
   preCompaction: SessionCompactionTranscriptReference;

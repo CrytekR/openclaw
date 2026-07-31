@@ -108,10 +108,29 @@ function scheduleRunStatusClear(host: RunLifecycleHost, status: ChatRunUiStatus)
   }, CHAT_RUN_STATUS_TOAST_DURATION_MS);
 }
 
-function clearRunIndicators(host: RunLifecycleHost) {
-  clearTimer(host.compactionClearTimer);
-  host.compactionClearTimer = null;
-  if (host.compactionStatus) {
+function shouldClearCompactionStatus(
+  status: CompactionStatus | null | undefined,
+  runId?: string | null,
+): boolean {
+  if (!status) {
+    return false;
+  }
+  // Finished compaction toasts own their 5s clear timer. Do not wipe them when
+  // the surrounding chat run ends (preflight uses a different runId).
+  if (status.phase === "complete") {
+    return false;
+  }
+  // Keep in-flight compaction for another run (e.g. preflight-compaction:*).
+  if (runId && status.runId && status.runId !== runId) {
+    return false;
+  }
+  return true;
+}
+
+function clearRunIndicators(host: RunLifecycleHost, runId?: string | null) {
+  if (shouldClearCompactionStatus(host.compactionStatus, runId)) {
+    clearTimer(host.compactionClearTimer);
+    host.compactionClearTimer = null;
     host.compactionStatus = null;
   }
   clearTimer(host.fallbackClearTimer);
@@ -181,7 +200,7 @@ export function reconcileChatRunLifecycle(host: RunLifecycleHost, options: Recon
   const sessionKey = toSessionKey(options.sessionKey) ?? host.sessionKey;
 
   if (options.clearIndicators ?? true) {
-    clearRunIndicators(host);
+    clearRunIndicators(host, runId);
   }
   if (options.clearChatStream) {
     host.chatStream = null;

@@ -47,7 +47,14 @@ import {
   buildEmbeddedRunExecutionParams,
   resolveModelFallbackOptions,
 } from "./agent-runner-utils.js";
-import type { CompactionNoticePhase } from "./compaction-notice.js";
+import {
+  buildCompactionAgentEventData,
+  formatCompactionTriggerReason,
+  resolveProjectedTokenProjection,
+  type CompactionNoticePhase,
+  type CompactionTriggerDetails,
+  type TranscriptRecountMethod,
+} from "./compaction-notice.js";
 import {
   hasAlreadyFlushedForCurrentCompaction,
   resolveMaxActiveTranscriptBytes,
@@ -623,6 +630,7 @@ type TranscriptTokenEstimate = {
   outputTokens?: number;
   transcriptByteSize?: number;
   transcriptBytesTokens?: number;
+  recountMethod?: TranscriptRecountMethod;
 };
 
 async function estimatePromptTokensFromSessionTranscript(params: {
@@ -673,6 +681,7 @@ async function estimatePromptTokensFromSessionTranscript(params: {
         outputTokens: Math.ceil(outputTokens),
         transcriptByteSize: snapshot.byteSize,
         transcriptBytesTokens,
+        recountMethod: "last_model_usage",
       };
     }
     const messages = (await readSessionMessagesAsync(
@@ -694,14 +703,21 @@ async function estimatePromptTokensFromSessionTranscript(params: {
     })();
     if (typeof promptTokens === "number" && Number.isFinite(promptTokens) && promptTokens > 0) {
       const usagePromptTokens = Math.ceil(promptTokens) + (trailingBytesTokens ?? 0);
+      const promptTokenCount = Math.max(usagePromptTokens, estimatedMessageTokens ?? 0);
       return {
-        promptTokens: Math.max(usagePromptTokens, estimatedMessageTokens ?? 0),
+        promptTokens: promptTokenCount,
         outputTokens:
           typeof outputTokens === "number" && Number.isFinite(outputTokens) && outputTokens > 0
             ? Math.ceil(outputTokens)
             : undefined,
         transcriptByteSize: snapshot.byteSize,
         transcriptBytesTokens,
+        recountMethod:
+          estimatedMessageTokens !== undefined && estimatedMessageTokens > usagePromptTokens
+            ? "recent_messages_estimate"
+            : (trailingBytesTokens ?? 0) > 0
+              ? "model_usage_plus_unread_tail"
+              : "last_model_usage",
       };
     }
     const estimatedTokens = estimatedMessageTokens ?? transcriptBytesTokens;
@@ -712,6 +728,8 @@ async function estimatePromptTokensFromSessionTranscript(params: {
       promptTokens: Math.ceil(estimatedTokens),
       transcriptByteSize: snapshot.byteSize,
       transcriptBytesTokens,
+      recountMethod:
+        estimatedMessageTokens !== undefined ? "recent_messages_estimate" : "chat_log_file_size",
     };
   } catch {
     return undefined;
@@ -732,7 +750,10 @@ export async function runPreflightCompactionIfNeeded(params: {
   storePath?: string;
   isHeartbeat: boolean;
   replyOperation: ReplyOperation;
-  onCompactionNotice?: (phase: CompactionNoticePhase) => Promise<void> | void;
+  onCompactionNotice?: (
+    phase: CompactionNoticePhase,
+    details?: CompactionTriggerDetails,
+  ) => Promise<void> | void;
 }): Promise<SessionEntry | undefined> {
   const deps = {
     compactEmbeddedAgentSession: memoryDeps.compactEmbeddedAgentSession,
@@ -855,6 +876,7 @@ export async function runPreflightCompactionIfNeeded(params: {
       : undefined;
   const transcriptPromptTokens = transcriptUsageTokens?.promptTokens;
   const transcriptOutputTokens = transcriptUsageTokens?.outputTokens;
+  const transcriptRecountMethod = transcriptUsageTokens?.recountMethod;
   const usageProjectedTokenCount =
     typeof transcriptPromptTokens === "number"
       ? resolveEffectivePromptTokens(
@@ -871,11 +893,22 @@ export async function runPreflightCompactionIfNeeded(params: {
           promptTokenEstimate,
         )
       : undefined;
-  const projectedTokenCount = Math.max(
-    usageProjectedTokenCount ?? 0,
-    freshProjectedTokenCount ?? 0,
-    stalePersistedPromptTokens ?? 0,
-  );
+  const projectedProjection = resolveProjectedTokenProjection({
+    transcriptPromptTokens,
+    transcriptOutputTokens,
+    transcriptRecountMethod,
+    freshPersistedTokens,
+    persistedPromptTokens: stalePersistedPromptTokens,
+    promptEstimateTokens: promptTokenEstimate,
+    resolveEffectivePromptTokens,
+  });
+  const projectedTokenCount =
+    projectedProjection?.projectedTokens ??
+    Math.max(
+      usageProjectedTokenCount ?? 0,
+      freshProjectedTokenCount ?? 0,
+      stalePersistedPromptTokens ?? 0,
+    );
   const tokenCountForCompaction =
     Number.isFinite(projectedTokenCount) && projectedTokenCount > 0
       ? projectedTokenCount
@@ -909,6 +942,19 @@ export async function runPreflightCompactionIfNeeded(params: {
   }
 
   const compactionTrigger = shouldCompactByTranscriptBytes ? "transcript_bytes" : "tokens";
+  const compactionDetails: CompactionTriggerDetails = {
+    trigger: compactionTrigger,
+    reason: "threshold",
+    ...(typeof tokenCountForCompaction === "number"
+      ? { projectedTokens: tokenCountForCompaction }
+      : {}),
+    ...(projectedProjection?.breakdown
+      ? { projectedBreakdown: projectedProjection.breakdown }
+      : {}),
+    ...(threshold > 0 ? { threshold } : {}),
+    ...(typeof activeTranscriptBytes === "number" ? { activeTranscriptBytes } : {}),
+    ...(typeof maxActiveTranscriptBytes === "number" ? { maxActiveTranscriptBytes } : {}),
+  };
   logVerbose(
     `preflightCompaction triggered: sessionKey=${params.sessionKey} ` +
       `tokenCount=${tokenCountForCompaction ?? freshPersistedTokens ?? "undefined"} ` +
@@ -918,9 +964,44 @@ export async function runPreflightCompactionIfNeeded(params: {
   );
 
   params.replyOperation.setPhase("preflight_compacting");
+  const resolveCompactionEventRunId = (): string | undefined => {
+    const sessionKey = normalizeOptionalString(params.sessionKey);
+    if (!sessionKey) {
+      return undefined;
+    }
+    return `preflight-compaction:${sessionKey}`;
+  };
+  const emitCompactionUiEvent = (phase: "start" | "end", extras?: Record<string, unknown>) => {
+    const runId = resolveCompactionEventRunId();
+    if (!runId) {
+      return;
+    }
+    const sessionKey = normalizeOptionalString(params.sessionKey);
+    if (sessionKey) {
+      memoryDeps.registerAgentRunContext(runId, {
+        sessionKey,
+        isControlUiVisible: true,
+      });
+    }
+    memoryDeps.emitAgentEvent({
+      runId,
+      stream: "compaction",
+      data: buildCompactionAgentEventData(phase, compactionDetails, extras),
+      ...(sessionKey ? { sessionKey } : {}),
+    });
+  };
   const notifyCompaction = async (phase: CompactionNoticePhase) => {
     try {
-      await params.onCompactionNotice?.(phase);
+      if (phase === "start") {
+        emitCompactionUiEvent("start");
+      } else if (phase === "end") {
+        emitCompactionUiEvent("end", { completed: true });
+      } else if (phase === "incomplete" || phase === "skipped") {
+        // Clear the Control UI active toast. Skipped must still emit end so a
+        // start that did not compact cannot stick for the stale-timeout window.
+        emitCompactionUiEvent("end", { completed: false });
+      }
+      await params.onCompactionNotice?.(phase, compactionDetails);
     } catch (err) {
       logVerbose(`preflightCompaction notice delivery failed: ${String(err)}`);
     }
@@ -974,6 +1055,7 @@ export async function runPreflightCompactionIfNeeded(params: {
       forcePreflight: true,
       preflightRequired: true,
       preflightCompactionTrigger: compactionTrigger,
+      reasonText: formatCompactionTriggerReason(compactionDetails),
       deferOwningContextEngineCompaction: false,
       contextTokenBudget: contextWindowTokens,
       currentTokenCount: tokenCountForCompaction ?? freshPersistedTokens,

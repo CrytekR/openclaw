@@ -1400,12 +1400,16 @@ export async function runReplyAgent(params: {
   });
   const compactionNoticeMessageId = sessionCtx.MessageSidFull ?? sessionCtx.MessageSid;
   const sendDirectCompactionNotice = shouldNotifyUserAboutCompaction(cfg)
-    ? async (phase: CompactionNoticePhase) => {
+    ? async (
+        phase: CompactionNoticePhase,
+        details?: import("./compaction-notice.js").CompactionTriggerDetails,
+      ) => {
         if (!opts?.onBlockReply) {
           return;
         }
         const noticePayload = createCompactionNoticePayload({
           phase,
+          details,
           currentMessageId: compactionNoticeMessageId,
           applyReplyToMode,
         });

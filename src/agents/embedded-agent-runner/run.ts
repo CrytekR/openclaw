@@ -6,6 +6,11 @@ import fs from "node:fs/promises";
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
 import { sanitizeForLog } from "../../../packages/terminal-core/src/ansi.js";
 import { FAST_MODE_AUTO_PROGRESS_KIND, type ReplyPayload } from "../../auto-reply/reply-payload.js";
+import {
+  buildCompactionAgentEventData,
+  formatCompactionTriggerReason,
+  type CompactionTriggerDetails,
+} from "../../auto-reply/reply/compaction-notice.js";
 import type { ThinkLevel } from "../../auto-reply/thinking.js";
 import { SILENT_REPLY_TOKEN } from "../../auto-reply/tokens.js";
 import { getRuntimeConfigSnapshot } from "../../config/config.js";
@@ -22,6 +27,7 @@ import {
   assertAgentRunLifecycleGenerationCurrent,
   captureAgentRunLifecycleGeneration,
   claimAgentRunContext,
+  emitAgentEvent,
   emitAgentItemEvent,
   getAgentEventLifecycleGeneration,
   getAgentRunContext,
@@ -1833,6 +1839,24 @@ async function runEmbeddedAgentInternal(
             ...(params.sessionKey ? { sessionKey: params.sessionKey } : {}),
           });
         };
+        // Emit Control UI + channel-visible compaction lifecycle with a durable
+        // reasonText. Hook-only messages above stay as an additive path for
+        // plugin-authored notice text and do not replace this trigger surface.
+        const emitCompactionVisibilityEvent = async (
+          phase: "start" | "end",
+          details: CompactionTriggerDetails,
+          extras?: Record<string, unknown>,
+        ) => {
+          const data = buildCompactionAgentEventData(phase, details, extras);
+          const payload = {
+            runId: params.runId,
+            stream: "compaction" as const,
+            data,
+            ...(params.sessionKey ? { sessionKey: params.sessionKey } : {}),
+          };
+          emitAgentEvent(payload);
+          await notifyAgentEvent(payload);
+        };
         // When the engine owns compaction, compactEmbeddedAgentSessionDirect is
         // bypassed. Fire lifecycle hooks here so recovery paths still notify
         // subscribers like memory extensions and usage trackers.
@@ -2445,7 +2469,15 @@ async function runEmbeddedAgentInternal(
               );
               let timeoutCompactResult: Awaited<ReturnType<typeof contextEngine.compact>>;
               await runOwnsCompactionBeforeHook("timeout recovery");
+              const timeoutCompactionDetails: CompactionTriggerDetails = {
+                trigger: "timeout_recovery",
+                ...(lastTurnPromptTokens != null ? { projectedTokens: lastTurnPromptTokens } : {}),
+                ...(ctxInfo.tokens > 0 ? { threshold: ctxInfo.tokens } : {}),
+                tokenUsedRatio,
+              };
+              const timeoutReasonText = formatCompactionTriggerReason(timeoutCompactionDetails);
               try {
+                await emitCompactionVisibilityEvent("start", timeoutCompactionDetails);
                 const timeoutCompactionRuntimeContext = {
                   ...buildEmbeddedCompactionRuntimeContext({
                     sessionKey: params.sessionKey,
@@ -2490,7 +2522,9 @@ async function runEmbeddedAgentInternal(
                   onCompactionHookMessages,
                   ...(attempt.promptCache ? { promptCache: attempt.promptCache } : {}),
                   runId: params.runId,
-                  trigger: "timeout_recovery",
+                  // Persist under budget trigger; durable UI/history text is reasonText.
+                  trigger: "budget" as const,
+                  ...(timeoutReasonText ? { reasonText: timeoutReasonText } : {}),
                   diagId: timeoutDiagId,
                   attempt: timeoutCompactionAttempts,
                   maxAttempts: MAX_TIMEOUT_COMPACTION_ATTEMPTS,
@@ -2527,6 +2561,9 @@ async function runEmbeddedAgentInternal(
                   reason: String(compactErr),
                 };
               }
+              await emitCompactionVisibilityEvent("end", timeoutCompactionDetails, {
+                completed: Boolean(timeoutCompactResult.ok && timeoutCompactResult.compacted),
+              });
               if (timeoutCompactResult.compacted) {
                 adoptCompactionTranscript(timeoutCompactResult);
               }
@@ -2641,7 +2678,17 @@ async function runEmbeddedAgentInternal(
               );
               let compactResult: Awaited<ReturnType<typeof contextEngine.compact>>;
               await runOwnsCompactionBeforeHook("overflow recovery");
+              const overflowCompactionDetails: CompactionTriggerDetails = {
+                trigger: "overflow",
+                reason: "overflow",
+                ...(overflowTokenCountForCompaction !== undefined
+                  ? { projectedTokens: overflowTokenCountForCompaction }
+                  : {}),
+                ...(ctxInfo.tokens > 0 ? { threshold: ctxInfo.tokens } : {}),
+              };
+              const overflowReasonText = formatCompactionTriggerReason(overflowCompactionDetails);
               try {
+                await emitCompactionVisibilityEvent("start", overflowCompactionDetails);
                 const overflowCompactionRuntimeContext = {
                   ...buildEmbeddedCompactionRuntimeContext({
                     sessionKey: params.sessionKey,
@@ -2685,7 +2732,8 @@ async function runEmbeddedAgentInternal(
                   onCompactionHookMessages,
                   ...(attempt.promptCache ? { promptCache: attempt.promptCache } : {}),
                   runId: params.runId,
-                  trigger: "overflow",
+                  trigger: "overflow" as const,
+                  ...(overflowReasonText ? { reasonText: overflowReasonText } : {}),
                   ...(overflowTokenCountForCompaction !== undefined
                     ? { currentTokenCount: overflowTokenCountForCompaction }
                     : {}),
@@ -2746,6 +2794,9 @@ async function runEmbeddedAgentInternal(
                   reason: String(compactErr),
                 };
               }
+              await emitCompactionVisibilityEvent("end", overflowCompactionDetails, {
+                completed: Boolean(compactResult.ok && compactResult.compacted),
+              });
               await runOwnsCompactionAfterHook("overflow recovery", compactResult);
               if (preflightRecovery && isNoRealConversationCompactionNoop(compactResult)) {
                 lastCompactionTokensAfter = undefined;

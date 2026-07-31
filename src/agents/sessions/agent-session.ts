@@ -15,6 +15,10 @@
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, dirname, resolve } from "node:path";
+import {
+  formatCompactionTriggerReason,
+  mergeCompactionReasonTextIntoDetails,
+} from "../../auto-reply/reply/compaction-notice.js";
 import { CURRENT_SESSION_VERSION } from "../../config/sessions/version.js";
 import {
   clampThinkingLevel,
@@ -1830,6 +1834,7 @@ export class AgentSession {
       const outcome = await this.runCompactionWork({
         customInstructions,
         mode: "manual",
+        reason: "manual",
         settings,
         signal: this.compactionAbortController.signal,
       });
@@ -1903,6 +1908,7 @@ export class AgentSession {
     signal: AbortSignal;
     customInstructions?: string;
     mode: "manual" | "auto";
+    reason: CompactionReason;
   }): Promise<CompactionWorkOutcome> {
     const isManual = options.mode === "manual";
     if (!this.model) {
@@ -1971,11 +1977,19 @@ export class AgentSession {
       return { status: "aborted" };
     }
 
+    // Persist a durable Control UI reason on the transcript compaction entry so
+    // history dividers keep the trigger after the composer toast clears.
+    const reasonText = formatCompactionTriggerReason({
+      reason: options.reason,
+      trigger: options.reason,
+    });
     this.sessionManager.appendCompaction(
       compactionResult.summary,
       compactionResult.firstKeptEntryId,
       compactionResult.tokensBefore,
-      compactionResult.details,
+      reasonText
+        ? mergeCompactionReasonTextIntoDetails(compactionResult.details, reasonText)
+        : compactionResult.details,
       fromExtension,
     );
     const newEntries = this.sessionManager.getEntries();
@@ -2115,6 +2129,7 @@ export class AgentSession {
     try {
       const outcome = await this.runCompactionWork({
         mode: "auto",
+        reason,
         settings,
         signal: this.autoCompactionAbortController.signal,
       });

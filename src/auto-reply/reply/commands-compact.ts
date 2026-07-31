@@ -284,6 +284,7 @@ export const handleCompactCommand: CommandHandler = async (params) => {
     },
     customInstructions,
     trigger: "manual",
+    reasonText: "manual",
     ownerNumbers: params.command.ownerList.length > 0 ? params.command.ownerList : undefined,
   });
 

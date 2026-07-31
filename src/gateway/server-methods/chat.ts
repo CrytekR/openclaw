@@ -153,6 +153,10 @@ import {
 import { ADMIN_SCOPE } from "../method-scopes.js";
 import { chatAbortMarkerTimestampMs, type ChatRunTiming } from "../server-chat-state.js";
 import { getMaxChatHistoryMessagesBytes, MAX_PAYLOAD_BYTES } from "../server-constants.js";
+import {
+  enrichChatHistoryCompactionMarkers,
+  isChatHistoryCompactionMarker,
+} from "../session-compaction-checkpoints.js";
 import { resolveSessionHistoryTailReadOptions } from "../session-history-state.js";
 import { persistGatewaySessionLifecycleEvent } from "../session-lifecycle-state.js";
 import { readSessionTranscriptIndex } from "../session-transcript-index.fs.js";
@@ -2609,6 +2613,11 @@ function dropLocalHistoryOverreadContextMessage(
   if (contextMessage === undefined) {
     return messages;
   }
+  // Compaction markers are UI dividers, not disposable overread context.
+  // Dropping them hides Compacted history even when Sessions still has checkpoints.
+  if (isChatHistoryCompactionMarker(contextMessage)) {
+    return messages;
+  }
   const index = messages.indexOf(contextMessage);
   if (index < 0) {
     return messages;
@@ -2741,9 +2750,10 @@ async function handleChatHistoryRequest({
     rawMessages,
     typeof entry?.sessionStartedAt === "number" ? entry.sessionStartedAt : undefined,
   );
+  const historyMessages = enrichChatHistoryCompactionMarkers(recencyFilteredMessages, entry);
   const effectiveMaxChars = resolveEffectiveChatHistoryMaxChars(cfg, maxChars);
   const normalized = augmentChatHistoryWithCanvasBlocks(
-    projectRecentChatDisplayMessages(recencyFilteredMessages, {
+    projectRecentChatDisplayMessages(historyMessages, {
       maxChars: effectiveMaxChars,
       maxMessages: max,
     }),

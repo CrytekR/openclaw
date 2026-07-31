@@ -671,10 +671,14 @@ export function createFollowupRunner(params: {
         });
       };
       const notifyPreflightCompaction = shouldNotifyUserAboutCompaction(runtimeConfig)
-        ? async (phase: CompactionNoticePhase) => {
+        ? async (
+            phase: CompactionNoticePhase,
+            details?: import("./compaction-notice.js").CompactionTriggerDetails,
+          ) => {
             await sendCompactionNoticePayload(
               createCompactionNoticePayload({
                 phase,
+                details,
                 currentMessageId: compactionNoticeReplyToId,
               }),
             );

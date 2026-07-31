@@ -23,6 +23,7 @@ import { isOpenClawDeliveryMirrorAssistantMessage } from "../shared/transcript-o
 import { stripInlineDirectiveTagsForDisplay } from "../utils/directive-tags.js";
 import { stripEnvelopeFromMessages } from "./chat-sanitize.js";
 import { isSuppressedControlReplyText } from "./control-reply-text.js";
+import { limitMessagesPreservingCompactionMarkers } from "./session-compaction-checkpoints.js";
 
 export const DEFAULT_CHAT_HISTORY_TEXT_MAX_CHARS = 8_000;
 
@@ -1738,7 +1739,9 @@ function limitChatDisplayMessages<T>(messages: T[], maxMessages?: number): T[] {
   ) {
     return messages;
   }
-  return messages.slice(-Math.floor(maxMessages));
+  // Keep the latest Compacted history marker when the recent window would
+  // otherwise drop it with older transcript rows.
+  return limitMessagesPreservingCompactionMarkers(messages, Math.floor(maxMessages));
 }
 
 export function projectRecentChatDisplayMessages(

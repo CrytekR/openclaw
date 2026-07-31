@@ -42,6 +42,25 @@ function compactionLogKind(reason: CompactionReason): string {
   return reason === "manual" ? "manual compaction" : "auto-compaction";
 }
 
+function buildCompactionEventData(
+  phase: "start" | "end",
+  reason: CompactionReason,
+  extras?: Record<string, unknown>,
+): Record<string, unknown> {
+  return {
+    phase,
+    reason,
+    trigger: reason,
+    reasonText:
+      reason === "overflow"
+        ? "context overflow"
+        : reason === "manual"
+          ? "manual"
+          : "context threshold",
+    ...extras,
+  };
+}
+
 /** Handles compaction start events from an embedded agent session. */
 export function handleCompactionStart(
   ctx: EmbeddedAgentSubscribeContext,
@@ -58,14 +77,15 @@ export function handleCompactionStart(
     reason,
     consoleMessage: `embedded run ${kind} start: runId=${ctx.params.runId} reason=${reason}`,
   });
+  const startData = buildCompactionEventData("start", reason);
   emitAgentEvent({
     runId: ctx.params.runId,
     stream: "compaction",
-    data: { phase: "start" },
+    data: startData,
   });
   void ctx.params.onAgentEvent?.({
     stream: "compaction",
-    data: { phase: "start" },
+    data: startData,
   });
 
   // Hooks are fire-and-forget so compaction state updates and liveness pauses
@@ -151,11 +171,17 @@ export function handleCompactionEnd(ctx: EmbeddedAgentSubscribeContext, evt: Com
   emitAgentEvent({
     runId: ctx.params.runId,
     stream: "compaction",
-    data: { phase: "end", willRetry, completed: hasResult && !wasAborted },
+    data: buildCompactionEventData("end", reason, {
+      willRetry,
+      completed: hasResult && !wasAborted,
+    }),
   });
   void ctx.params.onAgentEvent?.({
     stream: "compaction",
-    data: { phase: "end", willRetry, completed: hasResult && !wasAborted },
+    data: buildCompactionEventData("end", reason, {
+      willRetry,
+      completed: hasResult && !wasAborted,
+    }),
   });
 
   // after_compaction runs only once the run will not retry, matching the visible

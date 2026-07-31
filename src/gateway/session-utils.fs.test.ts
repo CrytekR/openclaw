@@ -498,6 +498,7 @@ describe("readSessionMessages", () => {
         summary: "Compacted history",
         firstKeptEntryId: "x",
         tokensBefore: 123,
+        details: { reasonText: "token budget: projected 10k ≥ 9k" },
       }),
       JSON.stringify({ message: { role: "assistant", content: "World" } }),
     ];
@@ -508,13 +509,14 @@ describe("readSessionMessages", () => {
     const marker = out[1] as {
       role: string;
       content?: Array<{ text?: string }>;
-      __openclaw?: { kind?: string; id?: string };
+      __openclaw?: { kind?: string; id?: string; reasonText?: string };
       timestamp?: number;
     };
     expect(marker.role).toBe("system");
     expect(marker.content?.[0]?.text).toBe("Compaction");
     expect(marker["__openclaw"]?.kind).toBe("compaction");
     expect(marker["__openclaw"]?.id).toBe("comp-1");
+    expect(marker["__openclaw"]?.reasonText).toBe("token budget: projected 10k ≥ 9k");
     expect(typeof marker.timestamp).toBe("number");
   });
 
