@@ -132,6 +132,7 @@ import {
   createCompactionNoticePayload,
   readCompactionHookMessages,
   shouldNotifyUserAboutCompaction,
+  type CompactionTriggerDetails,
 } from "./compaction-notice.js";
 import { resolveCurrentTurnImages } from "./current-turn-images.js";
 import { hasInboundAudio } from "./inbound-media.js";
@@ -1746,15 +1747,92 @@ export async function runAgentTurnWithFallback(params: {
       logVerbose(`compaction ${label} notice delivery failed (non-fatal): ${String(err)}`);
     }
   };
-  const sendCompactionNotice = async (phase: "start" | "end" | "incomplete") => {
+  const sendCompactionNotice = async (
+    phase: "start" | "end" | "incomplete",
+    details?: CompactionTriggerDetails,
+  ) => {
     await deliverCompactionNoticePayload(
       createCompactionNoticePayload({
         phase,
+        details,
         currentMessageId,
         applyReplyToMode: params.applyReplyToMode,
       }),
       phase,
     );
+  };
+  const readCompactionNoticeDetails = (
+    data: Record<string, unknown>,
+  ): CompactionTriggerDetails | undefined => {
+    const triggerRaw = typeof data.trigger === "string" ? data.trigger : undefined;
+    const reasonRaw = typeof data.reason === "string" ? data.reason : undefined;
+    const reasonText =
+      typeof data.reasonText === "string" && data.reasonText.trim()
+        ? data.reasonText.trim()
+        : undefined;
+    const trigger =
+      triggerRaw === "tokens" ||
+      triggerRaw === "transcript_bytes" ||
+      triggerRaw === "overflow" ||
+      triggerRaw === "manual" ||
+      triggerRaw === "threshold" ||
+      triggerRaw === "budget" ||
+      triggerRaw === "timeout_recovery" ||
+      triggerRaw === "cli_budget"
+        ? triggerRaw
+        : undefined;
+    const reason =
+      reasonRaw === "manual" || reasonRaw === "threshold" || reasonRaw === "overflow"
+        ? reasonRaw
+        : undefined;
+    const projectedTokens =
+      typeof data.projectedTokens === "number" &&
+      Number.isFinite(data.projectedTokens) &&
+      data.projectedTokens > 0
+        ? Math.floor(data.projectedTokens)
+        : undefined;
+    const threshold =
+      typeof data.threshold === "number" && Number.isFinite(data.threshold) && data.threshold > 0
+        ? Math.floor(data.threshold)
+        : undefined;
+    const tokenUsedRatio =
+      typeof data.tokenUsedRatio === "number" && Number.isFinite(data.tokenUsedRatio)
+        ? data.tokenUsedRatio
+        : undefined;
+    const activeTranscriptBytes =
+      typeof data.activeTranscriptBytes === "number" &&
+      Number.isFinite(data.activeTranscriptBytes) &&
+      data.activeTranscriptBytes >= 0
+        ? Math.floor(data.activeTranscriptBytes)
+        : undefined;
+    const maxActiveTranscriptBytes =
+      typeof data.maxActiveTranscriptBytes === "number" &&
+      Number.isFinite(data.maxActiveTranscriptBytes) &&
+      data.maxActiveTranscriptBytes > 0
+        ? Math.floor(data.maxActiveTranscriptBytes)
+        : undefined;
+    if (
+      !trigger &&
+      !reason &&
+      !reasonText &&
+      projectedTokens === undefined &&
+      threshold === undefined &&
+      tokenUsedRatio === undefined &&
+      activeTranscriptBytes === undefined &&
+      maxActiveTranscriptBytes === undefined
+    ) {
+      return undefined;
+    }
+    return {
+      ...(trigger ? { trigger } : {}),
+      ...(reason ? { reason } : {}),
+      ...(reasonText ? { reasonText } : {}),
+      ...(projectedTokens !== undefined ? { projectedTokens } : {}),
+      ...(threshold !== undefined ? { threshold } : {}),
+      ...(tokenUsedRatio !== undefined ? { tokenUsedRatio } : {}),
+      ...(activeTranscriptBytes !== undefined ? { activeTranscriptBytes } : {}),
+      ...(maxActiveTranscriptBytes !== undefined ? { maxActiveTranscriptBytes } : {}),
+    };
   };
   const sendCompactionHookMessages = async (messages: string[]) => {
     const noticePayload = createCompactionHookNoticePayload({
@@ -2785,7 +2863,35 @@ export async function runAgentTurnWithFallback(params: {
                       if (evt.stream === "compaction") {
                         const phase = readStringValue(evt.data.phase) ?? "";
                         const backend = readStringValue(evt.data.backend);
+                        // Codex native auto-compaction stays opaque by product choice.
+                        if (backend === CODEX_APP_SERVER_COMPACTION_BACKEND) {
+                          if (phase === "end" && evt.data?.completed === true) {
+                            attemptCompactionCount += 1;
+                            const modelRef = formatCompactionModelRef(provider, model);
+                            const consoleMessage =
+                              `codex app-server auto-compaction succeeded for ${modelRef}; ` +
+                              "refreshed session context";
+                            agentCompactionLog.info("codex app-server auto-compaction succeeded", {
+                              event: "codex_app_server_compaction_succeeded",
+                              backend,
+                              provider,
+                              model,
+                              sessionKey: params.sessionKey,
+                              sessionId: effectiveRun.sessionId,
+                              threadId: readStringValue(evt.data.threadId),
+                              turnId: readStringValue(evt.data.turnId),
+                              itemId: readStringValue(evt.data.itemId),
+                              compactionCount: attemptCompactionCount,
+                              consoleMessage,
+                            });
+                            if (params.opts?.onCompactionEnd) {
+                              await params.opts.onCompactionEnd();
+                            }
+                          }
+                          return;
+                        }
                         const hookMessages = readCompactionHookMessages(evt.data.messages);
+                        const noticeDetails = readCompactionNoticeDetails(evt.data);
                         const sendCompactionUserNotices = async (
                           noticePhase: "start" | "end" | "incomplete",
                         ) => {
@@ -2793,7 +2899,7 @@ export async function runAgentTurnWithFallback(params: {
                             await sendCompactionHookMessages(hookMessages);
                           }
                           if (notifyUserAboutCompaction) {
-                            await sendCompactionNotice(noticePhase);
+                            await sendCompactionNotice(noticePhase, noticeDetails);
                           }
                         };
                         if (phase === "start") {
@@ -2806,28 +2912,6 @@ export async function runAgentTurnWithFallback(params: {
                           const completed = evt.data?.completed === true;
                           if (completed) {
                             attemptCompactionCount += 1;
-                            if (backend === CODEX_APP_SERVER_COMPACTION_BACKEND) {
-                              const modelRef = formatCompactionModelRef(provider, model);
-                              const consoleMessage =
-                                `codex app-server auto-compaction succeeded for ${modelRef}; ` +
-                                "refreshed session context";
-                              agentCompactionLog.info(
-                                "codex app-server auto-compaction succeeded",
-                                {
-                                  event: "codex_app_server_compaction_succeeded",
-                                  backend,
-                                  provider,
-                                  model,
-                                  sessionKey: params.sessionKey,
-                                  sessionId: effectiveRun.sessionId,
-                                  threadId: readStringValue(evt.data.threadId),
-                                  turnId: readStringValue(evt.data.turnId),
-                                  itemId: readStringValue(evt.data.itemId),
-                                  compactionCount: attemptCompactionCount,
-                                  consoleMessage,
-                                },
-                              );
-                            }
                             if (params.opts?.onCompactionEnd) {
                               await params.opts.onCompactionEnd();
                             }

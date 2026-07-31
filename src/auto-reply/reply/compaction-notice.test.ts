@@ -83,7 +83,10 @@ describe("compaction notice trigger details (2026.6.11)", () => {
       basePromptTokens?: number,
       lastOutputTokens?: number,
       promptTokenEstimate?: number,
-    ) => Math.max(0, basePromptTokens ?? 0) + Math.max(0, lastOutputTokens ?? 0) + Math.max(0, promptTokenEstimate ?? 0);
+    ) =>
+      Math.max(0, basePromptTokens ?? 0) +
+      Math.max(0, lastOutputTokens ?? 0) +
+      Math.max(0, promptTokenEstimate ?? 0);
 
     expect(
       resolveProjectedTokenProjection({
@@ -148,7 +151,9 @@ describe("compaction notice trigger details (2026.6.11)", () => {
           recountMethod: "chat_log_file_size",
         },
       }),
-    ).toBe("107k = 100k chat-log recount via chat-log size ÷ 4 + 5.0k previous reply + 2.0k this message");
+    ).toBe(
+      "107k = 100k chat-log recount via chat-log size ÷ 4 + 5.0k previous reply + 2.0k this message",
+    );
   });
 
   it("builds agent-event payloads with reasonText and projectedBreakdown", () => {
@@ -197,6 +202,60 @@ describe("compaction notice trigger details (2026.6.11)", () => {
     ).toBe(
       "token budget: projected 176k = 160k context meter + 12k previous reply + 4.0k this message ≥ 160k",
     );
+    expect(resolveCompactionPersistReasonText({ trigger: "timeout_recovery" })).toBe(
+      "timeout recovery",
+    );
+    expect(resolveCompactionPersistReasonText({ trigger: "cli_budget" })).toBe(
+      "CLI context budget",
+    );
     expect(createCompactionNoticePayload({ phase: "end" }).text).toBe("🧹 Compaction complete");
+  });
+
+  it("formats overflow, timeout recovery, and CLI budget trigger reasons", () => {
+    expect(
+      formatCompactionTriggerReason({
+        trigger: "overflow",
+        projectedTokens: 210_000,
+        threshold: 200_000,
+      }),
+    ).toBe("context overflow: ~210k ≥ 200k context");
+    expect(
+      formatCompactionTriggerReason({
+        trigger: "timeout_recovery",
+        projectedTokens: 140_000,
+        threshold: 200_000,
+        tokenUsedRatio: 0.7,
+      }),
+    ).toBe("timeout recovery: prompt 140k (70% of 200k context)");
+    expect(
+      formatCompactionTriggerReason({
+        trigger: "cli_budget",
+        projectedTokens: 180_000,
+        threshold: 160_000,
+      }),
+    ).toBe("CLI context budget: 180k ≥ 160k");
+    expect(
+      formatCompactionTriggerReason({
+        trigger: "tokens",
+        reasonText: "token budget: projected 176k ≥ 160k",
+        projectedTokens: 999_999,
+        threshold: 1,
+      }),
+    ).toBe("token budget: projected 176k ≥ 160k");
+    expect(
+      buildCompactionAgentEventData("end", {
+        trigger: "timeout_recovery",
+        projectedTokens: 140_000,
+        threshold: 200_000,
+        tokenUsedRatio: 0.7,
+      }),
+    ).toMatchObject({
+      phase: "end",
+      trigger: "timeout_recovery",
+      projectedTokens: 140_000,
+      threshold: 200_000,
+      tokenUsedRatio: 0.7,
+      reasonText: "timeout recovery: prompt 140k (70% of 200k context)",
+    });
   });
 });

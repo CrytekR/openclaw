@@ -4,6 +4,7 @@
  * This module decides when CLI-backed sessions need context compaction, chooses
  * native harness or context-engine compaction, and records resulting session state.
  */
+import { formatCompactionTriggerReason } from "../../auto-reply/reply/compaction-notice.js";
 import type { SessionEntry } from "../../config/sessions/types.js";
 import type { AgentCompactionMode } from "../../config/types.agent-defaults.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
@@ -220,6 +221,12 @@ function readAgentIdFromSessionKey(sessionKey: string): string | undefined {
 }
 
 function buildCliCompactionRuntimeContext(params: CliCompactionRuntimeContextParams) {
+  const reasonText =
+    formatCompactionTriggerReason({
+      trigger: "cli_budget",
+      projectedTokens: params.currentTokenCount,
+      threshold: params.contextTokenBudget,
+    }) ?? "CLI context budget";
   return {
     ...buildEmbeddedCompactionRuntimeContext({
       sessionKey: params.sessionKey,
@@ -240,7 +247,8 @@ function buildCliCompactionRuntimeContext(params: CliCompactionRuntimeContextPar
     }),
     currentTokenCount: params.currentTokenCount,
     tokenBudget: params.contextTokenBudget,
-    trigger: params.trigger,
+    trigger: "budget" as const,
+    reasonText,
   };
 }
 
@@ -418,6 +426,12 @@ async function compactNativeHarnessCliTranscript(params: {
           contextTokenBudget: params.contextTokenBudget,
           currentTokenCount: params.currentTokenCount,
           trigger: "budget",
+          reasonText:
+            formatCompactionTriggerReason({
+              trigger: "cli_budget",
+              projectedTokens: params.currentTokenCount,
+              threshold: params.contextTokenBudget,
+            }) ?? "CLI context budget",
           force: true,
           messageChannel: params.messageChannel,
           agentAccountId: params.agentAccountId,
@@ -445,7 +459,7 @@ async function compactNativeHarnessCliTranscript(params: {
                   extraSystemPrompt: params.extraSystemPrompt,
                   currentTokenCount: params.currentTokenCount,
                   contextTokenBudget: params.contextTokenBudget,
-                  trigger: "cli_native_budget",
+                  trigger: "cli_budget",
                 }),
               }
             : {}),

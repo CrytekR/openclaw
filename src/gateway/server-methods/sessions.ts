@@ -2488,6 +2488,7 @@ export const sessionsHandlers: GatewayRequestHandlers = {
             defaultLevel: "off",
           },
           trigger: "manual",
+          reasonText: "manual",
         });
       } catch (err) {
         emitSessionOperation(context, {

@@ -45,17 +45,31 @@ export type ProjectedTokenBreakdown = {
  * Adapted for 2026.6.11 trigger surfaces:
  * - preflight: tokens | transcript_bytes (compact API still uses trigger "budget")
  * - session auto: threshold | overflow | manual
+ * - run recovery: overflow | timeout_recovery
+ * - CLI turn: cli_budget
  */
 export type CompactionTriggerDetails = {
-  trigger?: "tokens" | "transcript_bytes" | "overflow" | "manual" | "threshold" | "budget";
+  trigger?:
+    | "tokens"
+    | "transcript_bytes"
+    | "overflow"
+    | "manual"
+    | "threshold"
+    | "budget"
+    | "timeout_recovery"
+    | "cli_budget";
   /** Session-level reason used by AgentSession compaction events. */
   reason?: "manual" | "threshold" | "overflow";
+  /** Prefers this preformatted label when present (agent-event round-trip). */
+  reasonText?: string;
   /** Next-turn projected prompt tokens used for the token-budget gate. */
   projectedTokens?: number;
   /** How projectedTokens was computed when the token-budget gate fired. */
   projectedBreakdown?: ProjectedTokenBreakdown;
   /** Token-budget compaction threshold (contextWindow - reserve - soft). */
   threshold?: number;
+  /** Prompt-token share of context when timeout recovery fired (0-1). */
+  tokenUsedRatio?: number;
   /** Active transcript byte size when the size gate fired. */
   activeTranscriptBytes?: number;
   /** Configured max active transcript bytes. */
@@ -118,6 +132,10 @@ function resolveCompactionTriggerLabel(details?: CompactionTriggerDetails): stri
       return "context threshold";
     case "budget":
       return "context budget";
+    case "timeout_recovery":
+      return "timeout recovery";
+    case "cli_budget":
+      return "CLI context budget";
     default:
       return undefined;
   }
@@ -316,6 +334,10 @@ export function readProjectedTokenBreakdown(value: unknown): ProjectedTokenBreak
 export function formatCompactionTriggerReason(
   details?: CompactionTriggerDetails,
 ): string | undefined {
+  const explicit = normalizeOptionalString(details?.reasonText);
+  if (explicit) {
+    return explicit;
+  }
   const label = resolveCompactionTriggerLabel(details);
   if (!label) {
     return undefined;
@@ -338,6 +360,57 @@ export function formatCompactionTriggerReason(
       return `${label}: projected ${projected} ≥ ${formatCompactTokenCount(details.threshold)}`;
     }
     return `${label}: projected ${projected}`;
+  }
+  if (details?.trigger === "overflow" || details?.reason === "overflow") {
+    if (
+      typeof details.projectedTokens === "number" &&
+      Number.isFinite(details.projectedTokens) &&
+      details.projectedTokens > 0
+    ) {
+      if (
+        typeof details.threshold === "number" &&
+        Number.isFinite(details.threshold) &&
+        details.threshold > 0
+      ) {
+        return `${label}: ~${formatCompactTokenCount(details.projectedTokens)} ≥ ${formatCompactTokenCount(details.threshold)} context`;
+      }
+      return `${label}: ~${formatCompactTokenCount(details.projectedTokens)} tokens`;
+    }
+    return label;
+  }
+  if (details?.trigger === "timeout_recovery") {
+    const ratio =
+      typeof details.tokenUsedRatio === "number" && Number.isFinite(details.tokenUsedRatio)
+        ? Math.round(Math.max(0, details.tokenUsedRatio) * 100)
+        : undefined;
+    if (
+      ratio !== undefined &&
+      typeof details.projectedTokens === "number" &&
+      Number.isFinite(details.projectedTokens) &&
+      details.projectedTokens > 0 &&
+      typeof details.threshold === "number" &&
+      Number.isFinite(details.threshold) &&
+      details.threshold > 0
+    ) {
+      return `${label}: prompt ${formatCompactTokenCount(details.projectedTokens)} (${ratio}% of ${formatCompactTokenCount(details.threshold)} context)`;
+    }
+    if (ratio !== undefined) {
+      return `${label}: prompt ~${ratio}% of context`;
+    }
+    return label;
+  }
+  if (details?.trigger === "cli_budget") {
+    if (
+      typeof details.projectedTokens === "number" &&
+      Number.isFinite(details.projectedTokens) &&
+      details.projectedTokens > 0 &&
+      typeof details.threshold === "number" &&
+      Number.isFinite(details.threshold) &&
+      details.threshold > 0
+    ) {
+      return `${label}: ${formatCompactTokenCount(details.projectedTokens)} ≥ ${formatCompactTokenCount(details.threshold)}`;
+    }
+    return label;
   }
   if (
     details?.trigger === "transcript_bytes" &&
@@ -426,6 +499,13 @@ export function buildCompactionAgentEventData(
   ) {
     data.maxActiveTranscriptBytes = Math.floor(details.maxActiveTranscriptBytes);
   }
+  if (
+    typeof details?.tokenUsedRatio === "number" &&
+    Number.isFinite(details.tokenUsedRatio) &&
+    details.tokenUsedRatio >= 0
+  ) {
+    data.tokenUsedRatio = details.tokenUsedRatio;
+  }
   const reasonText = formatCompactionTriggerReason(details);
   if (reasonText) {
     data.reasonText = reasonText;
@@ -500,7 +580,7 @@ export function mergeCompactionReasonTextIntoDetails(
 /** Prefer explicit reasonText; otherwise derive a short label from compact trigger fields. */
 export function resolveCompactionPersistReasonText(params: {
   reasonText?: string;
-  trigger?: "budget" | "overflow" | "manual";
+  trigger?: "budget" | "overflow" | "manual" | "timeout_recovery" | "cli_budget";
   preflightCompactionTrigger?: "tokens" | "transcript_bytes";
 }): string | undefined {
   const explicit = normalizeOptionalString(params.reasonText);
@@ -516,6 +596,10 @@ export function resolveCompactionPersistReasonText(params: {
           ? "manual"
           : params.trigger === "budget"
             ? "budget"
-            : undefined),
+            : params.trigger === "timeout_recovery"
+              ? "timeout_recovery"
+              : params.trigger === "cli_budget"
+                ? "cli_budget"
+                : undefined),
   });
 }
