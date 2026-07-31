@@ -880,52 +880,183 @@ export function getSessionCompactionCheckpoint(params: {
   );
 }
 
+/** True when a chat.history message is the synthetic Compacted history divider. */
+export function isChatHistoryCompactionMarker(message: unknown): boolean {
+  if (!message || typeof message !== "object" || Array.isArray(message)) {
+    return false;
+  }
+  const metadata = (message as Record<string, unknown>)["__openclaw"];
+  return Boolean(
+    metadata &&
+    typeof metadata === "object" &&
+    !Array.isArray(metadata) &&
+    (metadata as { kind?: unknown }).kind === "compaction",
+  );
+}
+
+function readChatHistoryCompactionMarkerId(message: unknown): string | undefined {
+  if (!isChatHistoryCompactionMarker(message)) {
+    return undefined;
+  }
+  const metadata = (message as Record<string, unknown>)["__openclaw"] as Record<string, unknown>;
+  return typeof metadata.id === "string" && metadata.id.trim() ? metadata.id.trim() : undefined;
+}
+
+function resolveCheckpointDividerReasonText(
+  checkpoint: Pick<SessionCompactionCheckpoint, "reason" | "reasonText">,
+): string | undefined {
+  const explicit = checkpoint.reasonText?.trim();
+  if (explicit) {
+    return explicit;
+  }
+  switch (checkpoint.reason) {
+    case "manual":
+      return "manual";
+    case "auto-threshold":
+      return "context threshold";
+    case "overflow-retry":
+      return "context overflow";
+    case "timeout-retry":
+      return "timeout recovery";
+    default:
+      return undefined;
+  }
+}
+
+function buildSyntheticChatHistoryCompactionMarker(
+  checkpoint: SessionCompactionCheckpoint,
+): Record<string, unknown> {
+  const reasonText = resolveCheckpointDividerReasonText(checkpoint);
+  return {
+    role: "system",
+    content: [{ type: "text", text: "Compaction" }],
+    timestamp: checkpoint.createdAt,
+    __openclaw: {
+      kind: "compaction",
+      id: checkpoint.checkpointId,
+      ...(reasonText ? { reasonText } : {}),
+    },
+  };
+}
+
+function checkpointMatchesCompactionMarkerId(
+  checkpoint: SessionCompactionCheckpoint,
+  markerId: string,
+): boolean {
+  return (
+    checkpoint.checkpointId === markerId ||
+    checkpoint.postCompaction?.entryId === markerId ||
+    checkpoint.firstKeptEntryId === markerId ||
+    checkpoint.preCompaction?.entryId === markerId ||
+    checkpoint.preCompaction?.leafId === markerId ||
+    checkpoint.postCompaction?.leafId === markerId
+  );
+}
+
+function findCheckpointForCompactionMarker(
+  checkpoints: SessionCompactionCheckpoint[],
+  markerId: string | undefined,
+  markerTimestamp: number | undefined,
+  claimedCheckpointIds: Set<string>,
+): SessionCompactionCheckpoint | undefined {
+  if (markerId) {
+    const byId = checkpoints.find(
+      (checkpoint) =>
+        !claimedCheckpointIds.has(checkpoint.checkpointId) &&
+        checkpointMatchesCompactionMarkerId(checkpoint, markerId),
+    );
+    if (byId) {
+      return byId;
+    }
+  }
+  if (markerTimestamp === undefined || !Number.isFinite(markerTimestamp)) {
+    return undefined;
+  }
+  // Prefer the nearest unclaimed checkpoint by createdAt when transcript ids diverge
+  // from postCompaction.entryId (leaf id after compaction).
+  let best: SessionCompactionCheckpoint | undefined;
+  let bestDistance = Number.POSITIVE_INFINITY;
+  for (const checkpoint of checkpoints) {
+    if (claimedCheckpointIds.has(checkpoint.checkpointId)) {
+      continue;
+    }
+    const distance = Math.abs(checkpoint.createdAt - markerTimestamp);
+    if (distance < bestDistance) {
+      best = checkpoint;
+      bestDistance = distance;
+    }
+  }
+  // Only accept a loose timestamp match within 2 minutes.
+  return best && bestDistance <= 120_000 ? best : undefined;
+}
+
+function readMessageTimestampMs(message: unknown): number | undefined {
+  if (!message || typeof message !== "object" || Array.isArray(message)) {
+    return undefined;
+  }
+  const timestamp = (message as { timestamp?: unknown }).timestamp;
+  return typeof timestamp === "number" && Number.isFinite(timestamp) ? timestamp : undefined;
+}
+
+function insertMessagesByTimestamp(messages: unknown[], inserts: unknown[]): unknown[] {
+  if (inserts.length === 0) {
+    return messages;
+  }
+  const orderedInserts = [...inserts].toSorted((left, right) => {
+    return (readMessageTimestampMs(left) ?? 0) - (readMessageTimestampMs(right) ?? 0);
+  });
+  const next = [...messages];
+  for (const insert of orderedInserts) {
+    const insertTs = readMessageTimestampMs(insert) ?? 0;
+    let index = next.findIndex((message) => (readMessageTimestampMs(message) ?? 0) > insertTs);
+    if (index < 0) {
+      index = next.length;
+    }
+    next.splice(index, 0, insert);
+  }
+  return next;
+}
+
 /**
- * Backfill Control UI compaction markers from session checkpoints when the
- * transcript entry details omitted reasonText (engine-owned / older entries).
+ * Keep Control UI "Compacted history" dividers visible:
+ * - backfill reasonText onto transcript compaction markers from checkpoints
+ * - synthesize missing markers when Sessions has checkpoints but chat.history
+ *   lost/omitted the transcript compaction entry (window trim / engine-owned)
  */
 export function enrichChatHistoryCompactionMarkers(
   messages: unknown[],
   entry: Pick<SessionEntry, "compactionCheckpoints"> | undefined,
 ): unknown[] {
   const checkpoints = entry?.compactionCheckpoints;
-  if (!Array.isArray(checkpoints) || checkpoints.length === 0 || messages.length === 0) {
+  if (!Array.isArray(checkpoints) || checkpoints.length === 0) {
     return messages;
   }
-  const checkpointByEntryId = new Map(
-    checkpoints.flatMap((checkpoint) => {
-      const entryId = checkpoint.postCompaction?.entryId;
-      return typeof entryId === "string" && entryId
-        ? ([[entryId, checkpoint]] as const)
-        : [];
-    }),
-  );
-  if (checkpointByEntryId.size === 0) {
-    return messages;
-  }
+
+  const claimedCheckpointIds = new Set<string>();
   let changed = false;
   const enriched = messages.map((message) => {
-    if (!message || typeof message !== "object" || Array.isArray(message)) {
+    if (!isChatHistoryCompactionMarker(message)) {
       return message;
     }
     const record = message as Record<string, unknown>;
-    const metadataRaw = record["__openclaw"];
-    if (!metadataRaw || typeof metadataRaw !== "object" || Array.isArray(metadataRaw)) {
-      return message;
+    const metadata = record["__openclaw"] as Record<string, unknown>;
+    const markerId = readChatHistoryCompactionMarkerId(message);
+    const checkpoint = findCheckpointForCompactionMarker(
+      checkpoints,
+      markerId,
+      readMessageTimestampMs(message),
+      claimedCheckpointIds,
+    );
+    if (checkpoint) {
+      claimedCheckpointIds.add(checkpoint.checkpointId);
     }
-    const metadata = metadataRaw as Record<string, unknown>;
-    if (metadata.kind !== "compaction" || typeof metadata.id !== "string") {
-      return message;
-    }
-    if (typeof metadata.reasonText === "string" && metadata.reasonText.trim()) {
-      return message;
-    }
-    const checkpoint = checkpointByEntryId.get(metadata.id);
-    const reasonText =
-      typeof checkpoint?.reasonText === "string" && checkpoint.reasonText.trim()
-        ? checkpoint.reasonText.trim()
+    const existingReason =
+      typeof metadata.reasonText === "string" && metadata.reasonText.trim()
+        ? metadata.reasonText.trim()
         : undefined;
-    if (!reasonText) {
+    const reasonText =
+      existingReason ?? (checkpoint ? resolveCheckpointDividerReasonText(checkpoint) : undefined);
+    if (!reasonText || reasonText === existingReason) {
       return message;
     }
     changed = true;
@@ -937,5 +1068,40 @@ export function enrichChatHistoryCompactionMarkers(
       },
     };
   });
-  return changed ? enriched : messages;
+
+  const missingMarkers = checkpoints
+    .filter((checkpoint) => !claimedCheckpointIds.has(checkpoint.checkpointId))
+    .map((checkpoint) => buildSyntheticChatHistoryCompactionMarker(checkpoint));
+  if (missingMarkers.length === 0) {
+    return changed ? enriched : messages;
+  }
+  return insertMessagesByTimestamp(changed ? enriched : messages, missingMarkers);
+}
+
+/**
+ * When a history window drops older messages, keep the latest compaction divider
+ * from the discarded prefix so Control UI still shows Compacted history.
+ */
+export function limitMessagesPreservingCompactionMarkers<T>(
+  messages: T[],
+  maxMessages: number,
+): T[] {
+  if (!Number.isFinite(maxMessages) || maxMessages <= 0 || messages.length <= maxMessages) {
+    return messages;
+  }
+  const limit = Math.floor(maxMessages);
+  const sliced = messages.slice(-limit);
+  if (isChatHistoryCompactionMarker(sliced[0])) {
+    return sliced;
+  }
+  let latestCompaction: T | undefined;
+  for (const message of messages.slice(0, messages.length - limit)) {
+    if (isChatHistoryCompactionMarker(message)) {
+      latestCompaction = message;
+    }
+  }
+  if (!latestCompaction) {
+    return sliced;
+  }
+  return [latestCompaction, ...sliced.slice(-(limit - 1))];
 }

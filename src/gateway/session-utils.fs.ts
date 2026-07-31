@@ -418,7 +418,29 @@ function parseRecentTranscriptTailMessages(lines: string[], maxMessages: number)
   const selected = selectBoundedActiveTailRecords(entries, {
     failClosedOnInvalidLeafControl: true,
   });
-  return transcriptRecordsToMessages(selected).slice(-maxMessages);
+  const messages = transcriptRecordsToMessages(selected);
+  // Preserve the latest Compacted history marker when the recent-message window
+  // would otherwise drop it with older transcript rows.
+  if (messages.length <= maxMessages) {
+    return messages;
+  }
+  const limit = Math.max(0, Math.floor(maxMessages));
+  const sliced = messages.slice(-limit);
+  const first = sliced[0] as { __openclaw?: { kind?: unknown } } | undefined;
+  if (first?.["__openclaw"]?.kind === "compaction") {
+    return sliced;
+  }
+  let latestCompaction: unknown;
+  for (const message of messages.slice(0, messages.length - limit)) {
+    const marker = message as { __openclaw?: { kind?: unknown } } | undefined;
+    if (marker?.["__openclaw"]?.kind === "compaction") {
+      latestCompaction = message;
+    }
+  }
+  if (!latestCompaction) {
+    return sliced;
+  }
+  return [latestCompaction, ...sliced.slice(-(limit - 1))];
 }
 
 function visitTranscriptLines(filePath: string, visit: (line: string) => void): void {

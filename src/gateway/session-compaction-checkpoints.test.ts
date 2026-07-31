@@ -20,6 +20,7 @@ import {
   readSessionLeafStateFromTranscriptAsync,
   resolveCompactionCheckpointTranscriptPosition,
   enrichChatHistoryCompactionMarkers,
+  limitMessagesPreservingCompactionMarkers,
 } from "./session-compaction-checkpoints.js";
 
 const tempDirs: string[] = [];
@@ -1021,5 +1022,64 @@ describe("session-compaction-checkpoints", () => {
         reasonText: "token budget: projected 176k = 160k context meter ≥ 160k",
       },
     });
+  });
+
+  test("enrichChatHistoryCompactionMarkers synthesizes missing chat dividers from checkpoints", () => {
+    const messages = [
+      {
+        role: "user",
+        timestamp: 2_000,
+        content: [{ type: "text", text: "after compact" }],
+      },
+    ];
+    const enriched = enrichChatHistoryCompactionMarkers(messages, {
+      compactionCheckpoints: [
+        {
+          checkpointId: "cp-missing-marker",
+          sessionKey: MAIN_SESSION_KEY,
+          sessionId: TEST_SESSION_ID,
+          createdAt: 1_500,
+          reason: "auto-threshold",
+          reasonText: "token budget: projected 176k ≥ 160k",
+          preCompaction: { sessionId: TEST_SESSION_ID },
+          postCompaction: { sessionId: TEST_SESSION_ID, entryId: "leaf-after" },
+        },
+      ],
+    });
+    expect(enriched).toHaveLength(2);
+    expect(enriched[0]).toMatchObject({
+      role: "system",
+      timestamp: 1_500,
+      __openclaw: {
+        kind: "compaction",
+        id: "cp-missing-marker",
+        reasonText: "token budget: projected 176k ≥ 160k",
+      },
+    });
+    expect(enriched[1]).toMatchObject({
+      role: "user",
+      timestamp: 2_000,
+    });
+  });
+
+  test("limitMessagesPreservingCompactionMarkers keeps the latest dropped divider", () => {
+    const messages = [
+      {
+        role: "system",
+        timestamp: 1,
+        __openclaw: { kind: "compaction", id: "comp-old" },
+      },
+      { role: "user", timestamp: 2, content: "a" },
+      { role: "assistant", timestamp: 3, content: "b" },
+      { role: "user", timestamp: 4, content: "c" },
+    ];
+    expect(limitMessagesPreservingCompactionMarkers(messages, 2)).toEqual([
+      {
+        role: "system",
+        timestamp: 1,
+        __openclaw: { kind: "compaction", id: "comp-old" },
+      },
+      { role: "user", timestamp: 4, content: "c" },
+    ]);
   });
 });

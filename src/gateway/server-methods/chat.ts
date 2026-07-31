@@ -153,9 +153,12 @@ import {
 import { ADMIN_SCOPE } from "../method-scopes.js";
 import { chatAbortMarkerTimestampMs, type ChatRunTiming } from "../server-chat-state.js";
 import { getMaxChatHistoryMessagesBytes, MAX_PAYLOAD_BYTES } from "../server-constants.js";
+import {
+  enrichChatHistoryCompactionMarkers,
+  isChatHistoryCompactionMarker,
+} from "../session-compaction-checkpoints.js";
 import { resolveSessionHistoryTailReadOptions } from "../session-history-state.js";
 import { persistGatewaySessionLifecycleEvent } from "../session-lifecycle-state.js";
-import { enrichChatHistoryCompactionMarkers } from "../session-compaction-checkpoints.js";
 import { readSessionTranscriptIndex } from "../session-transcript-index.fs.js";
 import {
   capArrayByJsonBytes,
@@ -2608,6 +2611,11 @@ function dropLocalHistoryOverreadContextMessage(
   contextMessage: unknown,
 ): unknown[] {
   if (contextMessage === undefined) {
+    return messages;
+  }
+  // Compaction markers are UI dividers, not disposable overread context.
+  // Dropping them hides Compacted history even when Sessions still has checkpoints.
+  if (isChatHistoryCompactionMarker(contextMessage)) {
     return messages;
   }
   const index = messages.indexOf(contextMessage);
