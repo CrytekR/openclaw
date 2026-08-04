@@ -160,6 +160,25 @@ export async function recoverEmbeddedRunTimeout(input: {
       ...(input.attempt.promptCache ? { promptCache: input.attempt.promptCache } : {}),
       runId: runParams.runId,
       trigger: "timeout_recovery",
+      checkpointTrigger: {
+        path: "timeout_retry" as const,
+        trigger: "budget" as const,
+        ...(lastTurnPromptTokens != null
+          ? { projectedTokens: Math.floor(lastTurnPromptTokens) }
+          : {}),
+        ...(typeof input.contextTokenBudget === "number"
+          ? {
+              contextWindowTokens: input.contextTokenBudget,
+              // Timeout recovery fires when prompt usage exceeds 65% of the window.
+              thresholdTokens: Math.floor(input.contextTokenBudget * 0.65),
+            }
+          : {}),
+        attempt: input.state.timeoutCompactionAttempts,
+      },
+      ...(lastTurnPromptTokens != null
+        ? { currentTokenCount: Math.floor(lastTurnPromptTokens) }
+        : {}),
+      contextTokenBudget: input.contextTokenBudget,
       diagId: timeoutDiagId,
       attempt: input.state.timeoutCompactionAttempts,
       maxAttempts: MAX_TIMEOUT_COMPACTION_ATTEMPTS,

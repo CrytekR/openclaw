@@ -624,6 +624,11 @@ async function compactResolvedContextEngine(
                       ? "manual"
                       : undefined,
                 preflightCompactionTrigger: params.preflightCompactionTrigger,
+                ...(params.checkpointTrigger
+                  ? { checkpointTrigger: params.checkpointTrigger }
+                  : {}),
+                ...(params.trigger ? { trigger: params.trigger } : {}),
+                ...(typeof params.attempt === "number" ? { attempt: params.attempt } : {}),
               },
               runtimeSettings: contextEngineRuntimeSettings,
             },
@@ -693,6 +698,11 @@ async function compactResolvedContextEngine(
             sessionKey: params.sessionKey,
             sessionId: postCompactionSessionId,
             trigger: params.trigger,
+            checkpointTrigger: params.checkpointTrigger,
+            preflightCompactionTrigger: params.preflightCompactionTrigger,
+            currentTokenCount: params.currentTokenCount,
+            contextTokenBudget: params.contextTokenBudget ?? contextTokenBudget,
+            attempt: params.attempt,
             snapshot: checkpointSnapshot,
             summary: result.result?.summary,
             firstKeptEntryId: result.result?.firstKeptEntryId,

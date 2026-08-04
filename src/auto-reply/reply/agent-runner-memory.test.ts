@@ -159,6 +159,16 @@ type CompactEmbeddedAgentSessionParams = {
   modelSelectionLocked?: boolean;
   preflightRequired?: boolean;
   preflightCompactionTrigger?: string;
+  checkpointTrigger?: {
+    path?: string;
+    trigger?: string;
+    projectedTokens?: number;
+    thresholdTokens?: number;
+    contextWindowTokens?: number;
+    activeTranscriptBytes?: number;
+    maxActiveTranscriptBytes?: number;
+    projectedBreakdown?: unknown;
+  };
   sessionFile?: string;
   sessionId?: string;
   trigger?: string;
@@ -1329,6 +1339,13 @@ describe("runMemoryFlushIfNeeded", () => {
       forcePreflight: true,
       preflightRequired: true,
       preflightCompactionTrigger: "tokens",
+      checkpointTrigger: expect.objectContaining({
+        path: "preflight_tokens",
+        trigger: "tokens",
+        projectedTokens: expect.any(Number),
+        thresholdTokens: expect.any(Number),
+        contextWindowTokens: 100,
+      }),
       deferOwningContextEngineCompaction: false,
       contextTokenBudget: 100,
       agentHarnessId: "openclaw",
@@ -2617,6 +2634,12 @@ describe("runMemoryFlushIfNeeded", () => {
     const compactCall = requireCompactEmbeddedAgentSessionCall();
     expect(compactCall.trigger).toBe("budget");
     expect(compactCall.preflightCompactionTrigger).toBe("transcript_bytes");
+    expect(compactCall.checkpointTrigger).toMatchObject({
+      path: "preflight_transcript_bytes",
+      trigger: "transcript_bytes",
+      activeTranscriptBytes: expect.any(Number),
+      maxActiveTranscriptBytes: 10,
+    });
   });
 
   it("forces memory flush when a SQLite-backed transcript exceeds the byte threshold", async () => {

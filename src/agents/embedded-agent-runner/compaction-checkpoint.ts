@@ -1,4 +1,5 @@
 /** Owns the shared checkpoint lifecycle around both compaction entry points. */
+import type { SessionCompactionCheckpointTrigger } from "../../config/sessions/types.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import {
   createFileBackedCompactionCheckpointStore,
@@ -8,6 +9,7 @@ import {
   type CapturedCompactionCheckpointSnapshot,
 } from "../../gateway/session-compaction-checkpoints.js";
 import { formatErrorMessage } from "../../infra/errors.js";
+import { resolveCompactionCheckpointTriggerFromParams } from "./compaction-checkpoint-trigger.js";
 import { log } from "./logger.js";
 
 export const compactionCheckpointStore = createFileBackedCompactionCheckpointStore();
@@ -16,7 +18,12 @@ export async function persistCompactionCheckpoint(params: {
   config?: OpenClawConfig;
   sessionKey?: string;
   sessionId: string;
-  trigger?: "budget" | "overflow" | "manual";
+  trigger?: "budget" | "overflow" | "manual" | "timeout_recovery";
+  checkpointTrigger?: SessionCompactionCheckpointTrigger;
+  preflightCompactionTrigger?: "tokens" | "transcript_bytes";
+  currentTokenCount?: number;
+  contextTokenBudget?: number;
+  attempt?: number;
   snapshot?: CapturedCompactionCheckpointSnapshot | null;
   summary?: string;
   firstKeptEntryId?: string;
@@ -30,6 +37,14 @@ export async function persistCompactionCheckpoint(params: {
     return false;
   }
   try {
+    const checkpointTrigger = resolveCompactionCheckpointTriggerFromParams({
+      checkpointTrigger: params.checkpointTrigger,
+      trigger: params.trigger,
+      preflightCompactionTrigger: params.preflightCompactionTrigger,
+      currentTokenCount: params.currentTokenCount,
+      contextTokenBudget: params.contextTokenBudget,
+      attempt: params.attempt,
+    });
     const transcriptState = await readSessionLeafStateFromTranscriptAsync(params.sessionFile);
     const checkpointPosition = resolveCompactionCheckpointTranscriptPosition({
       preferredLeafId: params.leafId,
@@ -39,7 +54,11 @@ export async function persistCompactionCheckpoint(params: {
       cfg: params.config,
       sessionKey: params.sessionKey,
       sessionId: params.sessionId,
-      reason: resolveSessionCompactionCheckpointReason({ trigger: params.trigger }),
+      reason: resolveSessionCompactionCheckpointReason({
+        trigger: params.trigger,
+        checkpointTrigger,
+      }),
+      ...(checkpointTrigger ? { trigger: checkpointTrigger } : {}),
       snapshot: params.snapshot,
       summary: params.summary,
       firstKeptEntryId: params.firstKeptEntryId,
