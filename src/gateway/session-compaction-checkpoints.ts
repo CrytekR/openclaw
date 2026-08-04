@@ -244,11 +244,7 @@ export function resolveSessionCompactionCheckpointReason(params: {
   if (params.timedOut || params.trigger === "timeout_recovery" || path === "timeout_retry") {
     return "timeout-retry";
   }
-  if (
-    params.trigger === "overflow" ||
-    path === "overflow_retry" ||
-    path === "midturn_precheck"
-  ) {
+  if (params.trigger === "overflow" || path === "overflow_retry" || path === "midturn_precheck") {
     return "overflow-retry";
   }
   return "auto-threshold";

@@ -148,7 +148,9 @@ export function buildCheckpointTriggerFromPreflightDetails(params: {
       : "preflight_tokens";
   return normalizeSessionCompactionCheckpointTrigger({
     path,
-    trigger: params.details.trigger ?? (path === "preflight_transcript_bytes" ? "transcript_bytes" : "tokens"),
+    trigger:
+      params.details.trigger ??
+      (path === "preflight_transcript_bytes" ? "transcript_bytes" : "tokens"),
     ...(typeof params.details.projectedTokens === "number"
       ? { projectedTokens: params.details.projectedTokens }
       : {}),
