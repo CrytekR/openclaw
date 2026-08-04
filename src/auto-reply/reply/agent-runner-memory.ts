@@ -10,6 +10,7 @@ import { truncateUtf16Safe } from "@openclaw/normalization-core/utf16-slice";
 import { resolveBootstrapWarningSignaturesSeen } from "../../agents/bootstrap-budget.js";
 import { estimateMessagesTokens } from "../../agents/compaction.js";
 import { classifyCompactionReason } from "../../agents/embedded-agent-runner/compact-reasons.js";
+import { buildCheckpointTriggerFromPreflightDetails } from "../../agents/embedded-agent-runner/compaction-checkpoint-trigger.js";
 import { runEmbeddedAgentEntry } from "../../agents/embedded-agent-runner/run-entry.js";
 import { isCliRuntimeAliasForProvider } from "../../agents/model-runtime-aliases.js";
 import { isCliProvider } from "../../agents/model-selection.js";
@@ -1048,6 +1049,10 @@ export async function runPreflightCompactionIfNeeded(params: {
       forcePreflight: true,
       preflightRequired: true,
       preflightCompactionTrigger: compactionTrigger,
+      checkpointTrigger: buildCheckpointTriggerFromPreflightDetails({
+        details: compactionDetails,
+        contextWindowTokens,
+      }),
       deferOwningContextEngineCompaction: false,
       contextTokenBudget: contextWindowTokens,
       currentTokenCount: tokenCountForCompaction ?? freshPersistedTokens,

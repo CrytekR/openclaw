@@ -278,6 +278,37 @@ export async function recoverEmbeddedRunOverflow(input: {
         ...(input.attempt.promptCache ? { promptCache: input.attempt.promptCache } : {}),
         runId: runParams.runId,
         trigger: "overflow",
+        checkpointTrigger: {
+          path: preflightRecovery?.source === "mid-turn" ? "midturn_precheck" : "overflow_retry",
+          trigger: "overflow",
+          ...(overflowTokenCountForCompaction !== undefined
+            ? { projectedTokens: overflowTokenCountForCompaction }
+            : {}),
+          ...(typeof input.contextTokenBudget === "number"
+            ? {
+                contextWindowTokens: input.contextTokenBudget,
+                thresholdTokens: input.contextTokenBudget,
+              }
+            : {}),
+          attempt: input.state.overflowCompactionAttempts,
+          ...(preflightRecovery?.route ? { overflowRoute: preflightRecovery.route } : {}),
+          overflowSource:
+            preflightRecovery?.source === "mid-turn"
+              ? "mid-turn"
+              : contextOverflowError.source === "promptError" &&
+                  input.attempt.promptErrorSource === "precheck"
+                ? "precheck"
+                : contextOverflowError.source,
+          ...(preflightEstimatedPromptTokens !== undefined
+            ? { estimatedPromptTokens: preflightEstimatedPromptTokens }
+            : {}),
+          ...(typeof preflightRecovery?.promptBudgetBeforeReserve === "number"
+            ? { promptBudgetBeforeReserve: Math.floor(preflightRecovery.promptBudgetBeforeReserve) }
+            : {}),
+          ...(typeof preflightRecovery?.overflowTokens === "number"
+            ? { overflowTokens: Math.floor(preflightRecovery.overflowTokens) }
+            : {}),
+        },
         ...(overflowTokenCountForCompaction !== undefined
           ? { currentTokenCount: overflowTokenCountForCompaction }
           : {}),

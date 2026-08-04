@@ -294,6 +294,11 @@ export const handleCompactCommand: CommandHandler = async (params) => {
     },
     customInstructions,
     trigger: "manual",
+    checkpointTrigger: {
+      path: "manual",
+      trigger: "manual",
+      ...(typeof contextTokenBudget === "number" ? { contextWindowTokens: contextTokenBudget } : {}),
+    },
     ownerNumbers: params.command.ownerList.length > 0 ? params.command.ownerList : undefined,
   });
 

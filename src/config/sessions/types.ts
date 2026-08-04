@@ -74,6 +74,59 @@ export type SessionCompactionCheckpointReason =
   | "overflow-retry"
   | "timeout-retry";
 
+/**
+ * Specific compaction entry path that produced a checkpoint.
+ * Coarser `reason` remains for branch/restore UI; `path` names the gate.
+ */
+export type SessionCompactionCheckpointTriggerPath =
+  | "preflight_tokens"
+  | "preflight_transcript_bytes"
+  | "midturn_precheck"
+  | "overflow_retry"
+  | "timeout_retry"
+  | "auto_threshold"
+  | "manual";
+
+/** Additive terms that produced a preflight projected-token count. */
+export type SessionCompactionCheckpointProjectedBreakdown = {
+  source: "transcript_usage" | "fresh_persisted" | "persisted";
+  baseTokens: number;
+  lastOutputTokens?: number;
+  promptEstimateTokens?: number;
+  recountMethod?:
+    | "last_model_usage"
+    | "model_usage_plus_unread_tail"
+    | "recent_messages_estimate"
+    | "chat_log_file_size";
+};
+
+/**
+ * Gate evaluation snapshot persisted with a compaction checkpoint so operators
+ * can see which path fired and the numbers that crossed the threshold.
+ */
+export type SessionCompactionCheckpointTrigger = {
+  path: SessionCompactionCheckpointTriggerPath;
+  /** Coarse trigger family aligned with compaction agent-event payloads. */
+  trigger?: "tokens" | "transcript_bytes" | "overflow" | "manual" | "threshold" | "budget";
+  projectedTokens?: number;
+  projectedBreakdown?: SessionCompactionCheckpointProjectedBreakdown;
+  /** Soft/token-budget threshold used by the gate (tokens). */
+  thresholdTokens?: number;
+  /** Context window / token budget used in the evaluation. */
+  contextWindowTokens?: number;
+  activeTranscriptBytes?: number;
+  maxActiveTranscriptBytes?: number;
+  /** Overflow/timeout recovery attempt (1-based) when known. */
+  attempt?: number;
+  /** Preemptive/mid-turn route when overflow came from a precheck. */
+  overflowRoute?: "compact_only" | "truncate_tool_results_only" | "compact_then_truncate";
+  /** Origin of overflow recovery when known. */
+  overflowSource?: "promptError" | "assistantError" | "mid-turn" | "precheck";
+  estimatedPromptTokens?: number;
+  promptBudgetBeforeReserve?: number;
+  overflowTokens?: number;
+};
+
 type SessionCompactionTranscriptReference = {
   sessionId: string;
   sessionFile?: string;
@@ -87,6 +140,8 @@ export type SessionCompactionCheckpoint = {
   sessionId: string;
   createdAt: number;
   reason: SessionCompactionCheckpointReason;
+  /** Optional gate path + calculation snapshot for this compaction. */
+  trigger?: SessionCompactionCheckpointTrigger;
   tokensBefore?: number;
   tokensAfter?: number;
   summary?: string;
