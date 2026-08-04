@@ -2034,6 +2034,25 @@ export async function runEmbeddedAgent(
                   ...(attempt.promptCache ? { promptCache: attempt.promptCache } : {}),
                   runId: params.runId,
                   trigger: "timeout_recovery",
+                  checkpointTrigger: {
+                    path: "timeout_retry" as const,
+                    trigger: "budget" as const,
+                    ...(lastTurnPromptTokens != null
+                      ? { projectedTokens: Math.floor(lastTurnPromptTokens) }
+                      : {}),
+                    ...(typeof ctxInfo.tokens === "number"
+                      ? {
+                          contextWindowTokens: ctxInfo.tokens,
+                          // Timeout recovery fires when prompt usage exceeds 65% of the window.
+                          thresholdTokens: Math.floor(ctxInfo.tokens * 0.65),
+                        }
+                      : {}),
+                    attempt: timeoutCompactionAttempts,
+                  },
+                  ...(lastTurnPromptTokens != null
+                    ? { currentTokenCount: Math.floor(lastTurnPromptTokens) }
+                    : {}),
+                  contextTokenBudget: ctxInfo.tokens,
                   diagId: timeoutDiagId,
                   attempt: timeoutCompactionAttempts,
                   maxAttempts: MAX_TIMEOUT_COMPACTION_ATTEMPTS,
@@ -2226,9 +2245,35 @@ export async function runEmbeddedAgent(
                   ...(attempt.promptCache ? { promptCache: attempt.promptCache } : {}),
                   runId: params.runId,
                   trigger: "overflow",
+                  checkpointTrigger: {
+                    path:
+                      preflightRecovery?.source === "mid-turn"
+                        ? ("midturn_precheck" as const)
+                        : ("overflow_retry" as const),
+                    trigger: "overflow" as const,
+                    ...(overflowTokenCountForCompaction !== undefined
+                      ? { projectedTokens: overflowTokenCountForCompaction }
+                      : {}),
+                    ...(typeof ctxInfo.tokens === "number"
+                      ? {
+                          contextWindowTokens: ctxInfo.tokens,
+                          thresholdTokens: ctxInfo.tokens,
+                        }
+                      : {}),
+                    attempt: overflowCompactionAttempts,
+                    ...(preflightRecovery?.route ? { overflowRoute: preflightRecovery.route } : {}),
+                    overflowSource:
+                      preflightRecovery?.source === "mid-turn"
+                        ? "mid-turn"
+                        : contextOverflowError.source === "promptError" &&
+                            promptErrorSource === "precheck"
+                          ? "precheck"
+                          : contextOverflowError.source,
+                  },
                   ...(overflowTokenCountForCompaction !== undefined
                     ? { currentTokenCount: overflowTokenCountForCompaction }
                     : {}),
+                  contextTokenBudget: ctxInfo.tokens,
                   diagId: overflowDiagId,
                   attempt: overflowCompactionAttempts,
                   maxAttempts: MAX_OVERFLOW_COMPACTION_ATTEMPTS,

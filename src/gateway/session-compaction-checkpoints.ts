@@ -12,6 +12,7 @@ import { updateSessionStore } from "../config/sessions.js";
 import type {
   SessionCompactionCheckpoint,
   SessionCompactionCheckpointReason,
+  SessionCompactionCheckpointTrigger,
   SessionEntry,
 } from "../config/sessions.js";
 import { isCompactionCheckpointTranscriptFileName } from "../config/sessions/artifacts.js";
@@ -121,16 +122,18 @@ async function statCheckpointSnapshotBytes(
 
 /** Resolve the stored checkpoint reason from compaction trigger state. */
 export function resolveSessionCompactionCheckpointReason(params: {
-  trigger?: "budget" | "overflow" | "manual";
+  trigger?: "budget" | "overflow" | "manual" | "timeout_recovery";
   timedOut?: boolean;
+  checkpointTrigger?: SessionCompactionCheckpointTrigger;
 }): SessionCompactionCheckpointReason {
-  if (params.trigger === "manual") {
+  const path = params.checkpointTrigger?.path;
+  if (params.trigger === "manual" || path === "manual") {
     return "manual";
   }
-  if (params.timedOut) {
+  if (params.timedOut || params.trigger === "timeout_recovery" || path === "timeout_retry") {
     return "timeout-retry";
   }
-  if (params.trigger === "overflow") {
+  if (params.trigger === "overflow" || path === "overflow_retry" || path === "midturn_precheck") {
     return "overflow-retry";
   }
   return "auto-threshold";
@@ -478,6 +481,8 @@ export async function persistSessionCompactionCheckpoint(params: {
   sessionKey: string;
   sessionId: string;
   reason: SessionCompactionCheckpointReason;
+  /** Optional gate path + calculation snapshot for this compaction. */
+  trigger?: SessionCompactionCheckpointTrigger;
   snapshot: CapturedCompactionCheckpointSnapshot;
   summary?: string;
   firstKeptEntryId?: string;
@@ -509,6 +514,7 @@ export async function persistSessionCompactionCheckpoint(params: {
     sessionId: params.sessionId,
     createdAt,
     reason: params.reason,
+    ...(params.trigger ? { trigger: params.trigger } : {}),
     ...(typeof params.tokensBefore === "number" ? { tokensBefore: params.tokensBefore } : {}),
     ...(typeof params.tokensAfter === "number" ? { tokensAfter: params.tokensAfter } : {}),
     ...(params.summary?.trim() ? { summary: params.summary.trim() } : {}),

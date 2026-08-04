@@ -19,6 +19,86 @@ export const SessionCompactionCheckpointReasonSchema = Type.Union([
   Type.Literal("timeout-retry"),
 ]);
 
+/** Specific compaction entry path that produced a checkpoint. */
+const SessionCompactionCheckpointTriggerPathSchema = Type.Union([
+  Type.Literal("preflight_tokens"),
+  Type.Literal("preflight_transcript_bytes"),
+  Type.Literal("midturn_precheck"),
+  Type.Literal("overflow_retry"),
+  Type.Literal("timeout_retry"),
+  Type.Literal("auto_threshold"),
+  Type.Literal("manual"),
+]);
+
+/** Additive terms that produced a preflight projected-token count. */
+const SessionCompactionCheckpointProjectedBreakdownSchema = Type.Object(
+  {
+    source: Type.Union([
+      Type.Literal("transcript_usage"),
+      Type.Literal("fresh_persisted"),
+      Type.Literal("persisted"),
+    ]),
+    baseTokens: Type.Integer({ minimum: 0 }),
+    lastOutputTokens: Type.Optional(Type.Integer({ minimum: 0 })),
+    promptEstimateTokens: Type.Optional(Type.Integer({ minimum: 0 })),
+    recountMethod: Type.Optional(
+      Type.Union([
+        Type.Literal("last_model_usage"),
+        Type.Literal("model_usage_plus_unread_tail"),
+        Type.Literal("recent_messages_estimate"),
+        Type.Literal("chat_log_file_size"),
+      ]),
+    ),
+  },
+  { additionalProperties: false },
+);
+
+/**
+ * Gate evaluation snapshot persisted with a compaction checkpoint.
+ * Additive optional surface for operators; older clients may ignore it.
+ */
+const SessionCompactionCheckpointTriggerSchema = Type.Object(
+  {
+    path: SessionCompactionCheckpointTriggerPathSchema,
+    trigger: Type.Optional(
+      Type.Union([
+        Type.Literal("tokens"),
+        Type.Literal("transcript_bytes"),
+        Type.Literal("overflow"),
+        Type.Literal("manual"),
+        Type.Literal("threshold"),
+        Type.Literal("budget"),
+      ]),
+    ),
+    projectedTokens: Type.Optional(Type.Integer({ minimum: 0 })),
+    projectedBreakdown: Type.Optional(SessionCompactionCheckpointProjectedBreakdownSchema),
+    thresholdTokens: Type.Optional(Type.Integer({ minimum: 0 })),
+    contextWindowTokens: Type.Optional(Type.Integer({ minimum: 0 })),
+    activeTranscriptBytes: Type.Optional(Type.Integer({ minimum: 0 })),
+    maxActiveTranscriptBytes: Type.Optional(Type.Integer({ minimum: 0 })),
+    attempt: Type.Optional(Type.Integer({ minimum: 1 })),
+    overflowRoute: Type.Optional(
+      Type.Union([
+        Type.Literal("compact_only"),
+        Type.Literal("truncate_tool_results_only"),
+        Type.Literal("compact_then_truncate"),
+      ]),
+    ),
+    overflowSource: Type.Optional(
+      Type.Union([
+        Type.Literal("promptError"),
+        Type.Literal("assistantError"),
+        Type.Literal("mid-turn"),
+        Type.Literal("precheck"),
+      ]),
+    ),
+    estimatedPromptTokens: Type.Optional(Type.Integer({ minimum: 0 })),
+    promptBudgetBeforeReserve: Type.Optional(Type.Integer({ minimum: 0 })),
+    overflowTokens: Type.Optional(Type.Integer({ minimum: 0 })),
+  },
+  { additionalProperties: false },
+);
+
 /** Start/end event emitted while a session compaction operation runs. */
 export const SessionOperationEventSchema = Type.Object(
   {
@@ -53,6 +133,7 @@ export const SessionCompactionCheckpointSchema = Type.Object(
     sessionId: NonEmptyString,
     createdAt: Type.Integer({ minimum: 0 }),
     reason: SessionCompactionCheckpointReasonSchema,
+    trigger: Type.Optional(SessionCompactionCheckpointTriggerSchema),
     tokensBefore: Type.Optional(Type.Integer({ minimum: 0 })),
     tokensAfter: Type.Optional(Type.Integer({ minimum: 0 })),
     summary: Type.Optional(Type.String()),

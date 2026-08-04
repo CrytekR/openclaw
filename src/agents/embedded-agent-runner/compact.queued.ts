@@ -33,6 +33,7 @@ import { isOpenAIProvider } from "../openai-routing.js";
 import { ensureRuntimePluginsLoaded } from "../runtime-plugins.js";
 import { DEFERRED_CONTEXT_ENGINE_COMPACTION_REASON } from "./compact-reasons.js";
 import type { CompactEmbeddedAgentSessionParams } from "./compact.types.js";
+import { resolveCompactionCheckpointTriggerFromParams } from "./compaction-checkpoint-trigger.js";
 import { asCompactionHookRunner, runPostCompactionSideEffects } from "./compaction-hooks.js";
 import {
   buildEmbeddedCompactionRuntimeContext,
@@ -456,13 +457,23 @@ export async function compactEmbeddedAgentSession(
                 postCompactionLeafId ??
                 (await readSessionLeafIdFromTranscriptAsync(postCompactionSessionFile)) ??
                 undefined;
+              const checkpointTrigger = resolveCompactionCheckpointTriggerFromParams({
+                checkpointTrigger: params.checkpointTrigger,
+                trigger: params.trigger,
+                preflightCompactionTrigger: params.preflightCompactionTrigger,
+                currentTokenCount: params.currentTokenCount,
+                contextTokenBudget: params.contextTokenBudget ?? contextTokenBudget,
+                attempt: params.attempt,
+              });
               const storedCheckpoint = await persistSessionCompactionCheckpoint({
                 cfg: params.config,
                 sessionKey: params.sessionKey,
                 sessionId: postCompactionSessionId,
                 reason: resolveSessionCompactionCheckpointReason({
                   trigger: params.trigger,
+                  checkpointTrigger,
                 }),
+                ...(checkpointTrigger ? { trigger: checkpointTrigger } : {}),
                 snapshot: checkpointSnapshot,
                 summary: result.result?.summary,
                 firstKeptEntryId: result.result?.firstKeptEntryId,
