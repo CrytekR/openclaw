@@ -105,6 +105,7 @@ function appendCharOverflowGuardGateCalc(
   if (trigger.overflowSource) {
     parts.push(`overflowSource=${trigger.overflowSource}`);
   }
+  appendOverflowErrorText(parts, trigger);
 }
 
 function appendOverflowErrorText(

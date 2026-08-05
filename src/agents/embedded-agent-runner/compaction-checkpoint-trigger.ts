@@ -220,11 +220,10 @@ export function resolveOverflowCompactionTriggerPath(params: {
   if (params.preflightRecoverySource === "mid-turn") {
     return "midturn_precheck";
   }
-  // Char overflow guard only throws from transformContext before/during prompt
-  // submission. Assistant-side provider overflow must not inherit that label
-  // even if the error text happens to mention a similar phrase.
+  // OpenClaw-owned char-guard text from transformContext. The agent loop can
+  // absorb that throw into an assistant stopReason=error, so observation may
+  // be assistantError even though the message is not a provider API response.
   if (
-    params.overflowErrorSource === "promptError" &&
     typeof params.overflowErrorText === "string" &&
     params.overflowErrorText.includes("exceeds safe threshold during tool loop")
   ) {

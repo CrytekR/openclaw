@@ -210,14 +210,14 @@ describe("compaction-checkpoint-trigger", () => {
     ).toBe("char_overflow_guard");
     expect(
       resolveOverflowCompactionTriggerPath({
-        // Assistant/provider overflow must stay overflow_retry even if the
-        // error text mentions the char-guard phrase.
+        // transformContext char-guard throws can be absorbed into an assistant
+        // error by agent-core; the OpenClaw-owned message still identifies the path.
         overflowErrorSource: "assistantError",
         overflowErrorText:
           "Context overflow: estimated context size exceeds safe threshold during tool loop.",
         promptErrorSource: null,
       }),
-    ).toBe("overflow_retry");
+    ).toBe("char_overflow_guard");
     expect(
       resolveOverflowCompactionTriggerPath({
         promptErrorSource: "precheck",

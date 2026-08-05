@@ -52,11 +52,13 @@ describe("resolveSessionCompactionCheckpointReason", () => {
           maxContextChars: 460_800,
           contextWindowTokens: 128_000,
           attempt: 1,
-          overflowSource: "promptError",
+          overflowSource: "assistantError",
+          overflowErrorText:
+            "Context overflow: estimated context size exceeds safe threshold during tool loop.",
         },
       }),
     ).toBe(
-      "Char overflow guard estimatedContextChars=500000 maxContextChars=460800 contextWindowTokens=128000 attempt=1 overflowSource=promptError",
+      'Char overflow guard estimatedContextChars=500000 maxContextChars=460800 contextWindowTokens=128000 attempt=1 overflowSource=assistantError overflowError="Context overflow: estimated context size exceeds safe threshold during tool loop."',
     );
     expect(
       resolveSessionCompactionCheckpointReason({

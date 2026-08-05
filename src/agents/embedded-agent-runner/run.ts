@@ -2276,8 +2276,9 @@ export async function runEmbeddedAgent(
                             promptErrorSource === "precheck"
                           ? "precheck"
                           : contextOverflowError.source,
-                    // Persist the provider/stream failure text for model-API
-                    // assistant errors so sessions.json shows the real response.
+                    // Persist the observed assistant-error text. This may be a
+                    // provider/stream failure, or an OpenClaw transformContext
+                    // guard message absorbed into stopReason=error by agent-core.
                     ...(contextOverflowError.source === "assistantError"
                       ? { overflowErrorText: errorText }
                       : {}),
