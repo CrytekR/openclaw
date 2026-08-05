@@ -2251,6 +2251,7 @@ export async function runEmbeddedAgent(
                       preflightRecoverySource: preflightRecovery?.source,
                       promptErrorSource,
                       overflowErrorText: errorText,
+                      overflowErrorSource: contextOverflowError.source,
                     }),
                     trigger: "overflow" as const,
                     ...(overflowTokenCountForCompaction !== undefined

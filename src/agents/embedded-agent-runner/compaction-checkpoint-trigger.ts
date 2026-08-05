@@ -182,6 +182,8 @@ export function resolveOverflowCompactionTriggerPath(params: {
   preflightRecoverySource?: "mid-turn";
   promptErrorSource?: string | null;
   overflowErrorText?: string;
+  /** Where the overflow was observed: prompt throw vs assistant/provider error text. */
+  overflowErrorSource?: "promptError" | "assistantError";
 }): Extract<
   SessionCompactionCheckpointTriggerPath,
   "pre_prompt_precheck" | "char_overflow_guard" | "midturn_precheck" | "overflow_retry"
@@ -189,9 +191,11 @@ export function resolveOverflowCompactionTriggerPath(params: {
   if (params.preflightRecoverySource === "mid-turn") {
     return "midturn_precheck";
   }
-  // Char overflow guard throws during the tool-loop transformContext path with
-  // this exact message; keep matching the product string, not a broad heuristic.
+  // Char overflow guard only throws from transformContext before/during prompt
+  // submission. Assistant-side provider overflow must not inherit that label
+  // even if the error text happens to mention a similar phrase.
   if (
+    params.overflowErrorSource === "promptError" &&
     typeof params.overflowErrorText === "string" &&
     params.overflowErrorText.includes("exceeds safe threshold during tool loop")
   ) {

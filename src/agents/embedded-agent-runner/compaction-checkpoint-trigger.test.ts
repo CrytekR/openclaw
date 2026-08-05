@@ -136,6 +136,7 @@ describe("compaction-checkpoint-trigger", () => {
     ).toBe("midturn_precheck");
     expect(
       resolveOverflowCompactionTriggerPath({
+        overflowErrorSource: "promptError",
         overflowErrorText:
           "Context overflow: estimated context size exceeds safe threshold during tool loop.",
         promptErrorSource: "prompt",
@@ -143,11 +144,23 @@ describe("compaction-checkpoint-trigger", () => {
     ).toBe("char_overflow_guard");
     expect(
       resolveOverflowCompactionTriggerPath({
+        // Assistant/provider overflow must stay overflow_retry even if the
+        // error text mentions the char-guard phrase.
+        overflowErrorSource: "assistantError",
+        overflowErrorText:
+          "Context overflow: estimated context size exceeds safe threshold during tool loop.",
+        promptErrorSource: null,
+      }),
+    ).toBe("overflow_retry");
+    expect(
+      resolveOverflowCompactionTriggerPath({
         promptErrorSource: "precheck",
+        overflowErrorSource: "promptError",
       }),
     ).toBe("pre_prompt_precheck");
     expect(
       resolveOverflowCompactionTriggerPath({
+        overflowErrorSource: "promptError",
         promptErrorSource: "prompt",
         overflowErrorText: "prompt is too long",
       }),
