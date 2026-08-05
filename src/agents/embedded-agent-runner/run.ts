@@ -2276,6 +2276,11 @@ export async function runEmbeddedAgent(
                             promptErrorSource === "precheck"
                           ? "precheck"
                           : contextOverflowError.source,
+                    // Persist the provider/stream failure text for model-API
+                    // assistant errors so sessions.json shows the real response.
+                    ...(contextOverflowError.source === "assistantError"
+                      ? { overflowErrorText: errorText }
+                      : {}),
                   }),
                   ...(overflowTokenCountForCompaction !== undefined
                     ? { currentTokenCount: overflowTokenCountForCompaction }

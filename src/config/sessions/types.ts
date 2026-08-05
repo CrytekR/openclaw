@@ -125,6 +125,12 @@ export type SessionCompactionCheckpointTrigger = {
   overflowRoute?: "compact_only" | "truncate_tool_results_only" | "compact_then_truncate";
   /** Origin of overflow recovery when known. */
   overflowSource?: "promptError" | "assistantError" | "mid-turn" | "precheck";
+  /**
+   * Provider/stream error text that triggered overflow recovery.
+   * Present for assistantError (model API / stream failure encoded as an
+   * assistant stopReason=error). Bounded/sanitized before persistence.
+   */
+  overflowErrorText?: string;
   estimatedPromptTokens?: number;
   promptBudgetBeforeReserve?: number;
   overflowTokens?: number;

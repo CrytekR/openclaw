@@ -130,6 +130,8 @@ describe("compaction-checkpoint-trigger", () => {
         contextWindowTokens: 128_000,
         attempt: 1,
         overflowSource: "assistantError",
+        overflowErrorText:
+          "request_too_large: Request size exceeds model context window\nwith detail",
       }),
     ).toEqual({
       path: "overflow_retry",
@@ -139,6 +141,7 @@ describe("compaction-checkpoint-trigger", () => {
       contextWindowTokens: 128_000,
       attempt: 1,
       overflowSource: "assistantError",
+      overflowErrorText: "request_too_large: Request size exceeds model context window with detail",
     });
     expect(
       buildOverflowCompactionCheckpointTrigger({
@@ -167,6 +170,27 @@ describe("compaction-checkpoint-trigger", () => {
         attempt: 0,
       }),
     ).toEqual({ path: "manual" });
+  });
+
+  it("normalizes assistant overflow error text for sessions.json", () => {
+    const long = `x${"y".repeat(600)}`;
+    expect(
+      normalizeSessionCompactionCheckpointTrigger({
+        path: "overflow_retry",
+        overflowSource: "assistantError",
+        overflowErrorText: `  ${long}\n\nextra  `,
+      }),
+    ).toEqual({
+      path: "overflow_retry",
+      overflowSource: "assistantError",
+      overflowErrorText: `x${"y".repeat(499)}`,
+    });
+    expect(
+      normalizeSessionCompactionCheckpointTrigger({
+        path: "overflow_retry",
+        overflowErrorText: "   ",
+      }),
+    ).toEqual({ path: "overflow_retry" });
   });
 
   it("classifies overflow recovery into detailed entry paths", () => {

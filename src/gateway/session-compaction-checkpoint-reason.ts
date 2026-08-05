@@ -107,6 +107,17 @@ function appendCharOverflowGuardGateCalc(
   }
 }
 
+function appendOverflowErrorText(
+  parts: string[],
+  trigger: SessionCompactionCheckpointTrigger,
+): void {
+  if (!trigger.overflowErrorText) {
+    return;
+  }
+  // JSON-quote so spaces/punctuation in provider error text stay one field.
+  parts.push(`overflowError=${JSON.stringify(trigger.overflowErrorText)}`);
+}
+
 function appendOverflowRetryGateCalc(
   parts: string[],
   trigger: SessionCompactionCheckpointTrigger,
@@ -118,6 +129,7 @@ function appendOverflowRetryGateCalc(
   if (trigger.overflowSource) {
     parts.push(`overflowSource=${trigger.overflowSource}`);
   }
+  appendOverflowErrorText(parts, trigger);
 }
 
 function appendTimeoutRetryGateCalc(

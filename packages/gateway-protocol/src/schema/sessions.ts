@@ -93,6 +93,7 @@ const SessionCompactionCheckpointTriggerSchema = Type.Object(
         Type.Literal("precheck"),
       ]),
     ),
+    overflowErrorText: Type.Optional(Type.String({ minLength: 1 })),
     estimatedPromptTokens: Type.Optional(Type.Integer({ minimum: 0 })),
     promptBudgetBeforeReserve: Type.Optional(Type.Integer({ minimum: 0 })),
     overflowTokens: Type.Optional(Type.Integer({ minimum: 0 })),

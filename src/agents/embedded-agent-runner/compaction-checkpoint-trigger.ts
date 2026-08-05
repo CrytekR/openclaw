@@ -32,6 +32,23 @@ function readNonNegativeInt(value: unknown): number | undefined {
   return Math.floor(value);
 }
 
+/** Keep provider error text short and single-line for sessions.json. */
+const MAX_OVERFLOW_ERROR_TEXT_CHARS = 500;
+
+function normalizeOverflowErrorText(value: unknown): string | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const trimmed = value.replace(/\s+/g, " ").trim();
+  if (!trimmed) {
+    return undefined;
+  }
+  if (trimmed.length <= MAX_OVERFLOW_ERROR_TEXT_CHARS) {
+    return trimmed;
+  }
+  return trimmed.slice(0, MAX_OVERFLOW_ERROR_TEXT_CHARS);
+}
+
 function normalizeProjectedBreakdown(
   value: SessionCompactionCheckpointProjectedBreakdown | undefined,
 ): SessionCompactionCheckpointProjectedBreakdown | undefined {
@@ -118,6 +135,7 @@ export function normalizeSessionCompactionCheckpointTrigger(
     value.overflowSource === "precheck"
       ? value.overflowSource
       : undefined;
+  const overflowErrorText = normalizeOverflowErrorText(value.overflowErrorText);
   const estimatedPromptTokens = readPositiveInt(value.estimatedPromptTokens);
   const promptBudgetBeforeReserve = readPositiveInt(value.promptBudgetBeforeReserve);
   const overflowTokens = readPositiveInt(value.overflowTokens);
@@ -138,6 +156,7 @@ export function normalizeSessionCompactionCheckpointTrigger(
     ...(attempt !== undefined ? { attempt } : {}),
     ...(overflowRoute ? { overflowRoute } : {}),
     ...(overflowSource ? { overflowSource } : {}),
+    ...(overflowErrorText ? { overflowErrorText } : {}),
     ...(estimatedPromptTokens !== undefined ? { estimatedPromptTokens } : {}),
     ...(promptBudgetBeforeReserve !== undefined ? { promptBudgetBeforeReserve } : {}),
     ...(overflowTokens !== undefined ? { overflowTokens } : {}),
@@ -233,6 +252,8 @@ export function buildOverflowCompactionCheckpointTrigger(params: {
   attempt: number;
   overflowRoute?: SessionCompactionCheckpointTrigger["overflowRoute"];
   overflowSource?: SessionCompactionCheckpointTrigger["overflowSource"];
+  /** Provider/stream error text; persisted for assistantError model-API failures. */
+  overflowErrorText?: string;
   estimatedPromptTokens?: number;
   promptBudgetBeforeReserve?: number;
   overflowTokens?: number;
@@ -248,6 +269,7 @@ export function buildOverflowCompactionCheckpointTrigger(params: {
       : {}),
     ...(params.overflowRoute ? { overflowRoute: params.overflowRoute } : {}),
     ...(params.overflowSource ? { overflowSource: params.overflowSource } : {}),
+    ...(params.overflowErrorText ? { overflowErrorText: params.overflowErrorText } : {}),
   };
 
   if (params.path === "char_overflow_guard") {

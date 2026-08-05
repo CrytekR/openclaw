@@ -67,10 +67,11 @@ describe("resolveSessionCompactionCheckpointReason", () => {
           contextWindowTokens: 128_000,
           attempt: 1,
           overflowSource: "assistantError",
+          overflowErrorText: "request_too_large: Request size exceeds model context window",
         },
       }),
     ).toBe(
-      "Overflow retry compactionTokens=128001 contextWindowTokens=128000 attempt=1 overflowSource=assistantError",
+      'Overflow retry compactionTokens=128001 contextWindowTokens=128000 attempt=1 overflowSource=assistantError overflowError="request_too_large: Request size exceeds model context window"',
     );
     expect(
       resolveSessionCompactionCheckpointReason({
