@@ -11,18 +11,12 @@ import { NonEmptyString, SessionLabelString } from "./primitives.js";
  * schemas are shared by dashboard, CLI, ACP, and gateway RPC callers.
  */
 
-/** Reason a compaction checkpoint was created. */
-export const SessionCompactionCheckpointReasonSchema = Type.Union([
-  Type.Literal("manual"),
-  Type.Literal("auto-threshold"),
-  Type.Literal("preflight-tokens"),
-  Type.Literal("preflight-transcript-bytes"),
-  Type.Literal("pre-prompt-precheck"),
-  Type.Literal("char-overflow-guard"),
-  Type.Literal("midturn-precheck"),
-  Type.Literal("overflow-retry"),
-  Type.Literal("timeout-retry"),
-]);
+/**
+ * Reason a compaction checkpoint was created.
+ * Freeform operator-facing string: path label plus optional gate calc fields.
+ * Legacy short codes (`manual`, `overflow-retry`, ...) remain valid.
+ */
+export const SessionCompactionCheckpointReasonSchema = NonEmptyString;
 
 /** Specific compaction entry path that produced a checkpoint. */
 const SessionCompactionCheckpointTriggerPathSchema = Type.Union([

@@ -390,16 +390,8 @@ export type AgentsFilesSetResult = {
 export type SessionRunStatus = "running" | "done" | "failed" | "killed" | "timeout";
 export type SubagentRunState = "active" | "interrupted" | "historical";
 
-export type SessionCompactionCheckpointReason =
-  | "manual"
-  | "auto-threshold"
-  | "preflight-tokens"
-  | "preflight-transcript-bytes"
-  | "pre-prompt-precheck"
-  | "char-overflow-guard"
-  | "midturn-precheck"
-  | "overflow-retry"
-  | "timeout-retry";
+/** Operator-facing checkpoint reason: path label plus optional gate calc fields. */
+export type SessionCompactionCheckpointReason = string;
 
 export type SessionCompactionTranscriptReference = {
   sessionId: string;

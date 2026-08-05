@@ -58,19 +58,12 @@ export type CliSessionBinding = {
 };
 
 /**
- * Compaction checkpoint reason naming the concrete entry path.
- * UI and operators read this field first; keep values stable and specific.
+ * Compaction checkpoint reason for operators/UI.
+ * Freeform string that starts with the entry-path label and may append gate
+ * calculation fields (e.g. `projectedTokens=181000 thresholdTokens=176000`).
+ * Older checkpoints may still use legacy short codes such as `manual`.
  */
-export type SessionCompactionCheckpointReason =
-  | "manual"
-  | "auto-threshold"
-  | "preflight-tokens"
-  | "preflight-transcript-bytes"
-  | "pre-prompt-precheck"
-  | "char-overflow-guard"
-  | "midturn-precheck"
-  | "overflow-retry"
-  | "timeout-retry";
+export type SessionCompactionCheckpointReason = string;
 
 /**
  * Specific compaction entry path that produced a checkpoint.

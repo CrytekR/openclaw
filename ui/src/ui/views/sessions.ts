@@ -340,6 +340,8 @@ function hasActiveFilters(props: SessionsProps): boolean {
 }
 
 function formatCheckpointReason(reason: SessionCompactionCheckpoint["reason"]): string {
+  // New checkpoints store a freeform path+calc reason and display as-is.
+  // Keep legacy short-code labels for older session stores.
   switch (reason) {
     case "manual":
       return t("sessionsView.manual");

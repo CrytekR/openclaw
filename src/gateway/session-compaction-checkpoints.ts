@@ -22,6 +22,8 @@ import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
 import { resolveGatewaySessionStoreTarget } from "./session-utils.js";
 
+export { resolveSessionCompactionCheckpointReason } from "./session-compaction-checkpoint-reason.js";
+
 const log = createSubsystemLogger("gateway/session-compaction-checkpoints");
 const MAX_COMPACTION_CHECKPOINTS_PER_SESSION = 25;
 export const MAX_COMPACTION_CHECKPOINT_LEAF_SCAN_BYTES = 64 * 1024 * 1024;
@@ -118,45 +120,6 @@ async function statCheckpointSnapshotBytes(
     }),
   );
   return bytesByPath;
-}
-
-/** Resolve the stored checkpoint reason from compaction trigger state. */
-export function resolveSessionCompactionCheckpointReason(params: {
-  trigger?: "budget" | "overflow" | "manual" | "timeout_recovery";
-  timedOut?: boolean;
-  checkpointTrigger?: SessionCompactionCheckpointTrigger;
-}): SessionCompactionCheckpointReason {
-  const path = params.checkpointTrigger?.path;
-  if (params.trigger === "manual" || path === "manual") {
-    return "manual";
-  }
-  if (params.timedOut || params.trigger === "timeout_recovery" || path === "timeout_retry") {
-    return "timeout-retry";
-  }
-  // Prefer the concrete gate path so operators can read detailed entry routes
-  // directly from `reason` without inspecting the optional trigger snapshot.
-  if (path === "preflight_tokens") {
-    return "preflight-tokens";
-  }
-  if (path === "preflight_transcript_bytes") {
-    return "preflight-transcript-bytes";
-  }
-  if (path === "pre_prompt_precheck") {
-    return "pre-prompt-precheck";
-  }
-  if (path === "char_overflow_guard") {
-    return "char-overflow-guard";
-  }
-  if (path === "midturn_precheck") {
-    return "midturn-precheck";
-  }
-  if (path === "overflow_retry" || params.trigger === "overflow") {
-    return "overflow-retry";
-  }
-  if (path === "auto_threshold") {
-    return "auto-threshold";
-  }
-  return "auto-threshold";
 }
 
 const SESSION_HEADER_READ_MAX_BYTES = 64 * 1024;
