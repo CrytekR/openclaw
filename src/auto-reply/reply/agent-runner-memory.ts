@@ -9,6 +9,7 @@ import {
 import { resolveBootstrapWarningSignaturesSeen } from "../../agents/bootstrap-budget.js";
 import { estimateMessagesTokens } from "../../agents/compaction.js";
 import { classifyCompactionReason } from "../../agents/embedded-agent-runner/compact-reasons.js";
+import { buildCheckpointTriggerFromPreflightDetails } from "../../agents/embedded-agent-runner/compaction-checkpoint-trigger.js";
 import { resolveAgentHarnessPolicy } from "../../agents/harness/policy.js";
 import { ensureSelectedAgentHarnessPlugin } from "../../agents/harness/runtime-plugin.js";
 import { runWithModelFallback } from "../../agents/model-fallback.js";
@@ -849,6 +850,39 @@ export async function runPreflightCompactionIfNeeded(params: {
   }
 
   const compactionTrigger = shouldCompactByTranscriptBytes ? "transcript_bytes" : "tokens";
+  const projectedBreakdown =
+    typeof transcriptPromptTokens === "number"
+      ? {
+          source: "transcript_usage" as const,
+          baseTokens: Math.floor(transcriptPromptTokens),
+          ...(typeof transcriptOutputTokens === "number"
+            ? { lastOutputTokens: Math.floor(transcriptOutputTokens) }
+            : {}),
+          ...(typeof promptTokenEstimate === "number"
+            ? { promptEstimateTokens: Math.floor(promptTokenEstimate) }
+            : {}),
+        }
+      : typeof freshPersistedTokens === "number"
+        ? {
+            source: "fresh_persisted" as const,
+            baseTokens: Math.floor(freshPersistedTokens),
+          }
+        : typeof stalePersistedPromptTokens === "number"
+          ? {
+              source: "persisted" as const,
+              baseTokens: Math.floor(stalePersistedPromptTokens),
+            }
+          : undefined;
+  const compactionDetails = {
+    trigger: compactionTrigger,
+    ...(typeof tokenCountForCompaction === "number"
+      ? { projectedTokens: tokenCountForCompaction }
+      : {}),
+    ...(projectedBreakdown ? { projectedBreakdown } : {}),
+    threshold,
+    ...(typeof activeTranscriptBytes === "number" ? { activeTranscriptBytes } : {}),
+    ...(typeof maxActiveTranscriptBytes === "number" ? { maxActiveTranscriptBytes } : {}),
+  };
   logVerbose(
     `preflightCompaction triggered: sessionKey=${params.sessionKey} ` +
       `tokenCount=${tokenCountForCompaction ?? freshPersistedTokens ?? "undefined"} ` +
@@ -914,6 +948,10 @@ export async function runPreflightCompactionIfNeeded(params: {
       forcePreflight: true,
       preflightRequired: true,
       preflightCompactionTrigger: compactionTrigger,
+      checkpointTrigger: buildCheckpointTriggerFromPreflightDetails({
+        details: compactionDetails,
+        contextWindowTokens,
+      }),
       deferOwningContextEngineCompaction: false,
       contextTokenBudget: contextWindowTokens,
       currentTokenCount: tokenCountForCompaction ?? freshPersistedTokens,

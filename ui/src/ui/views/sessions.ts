@@ -340,11 +340,23 @@ function hasActiveFilters(props: SessionsProps): boolean {
 }
 
 function formatCheckpointReason(reason: SessionCompactionCheckpoint["reason"]): string {
+  // New checkpoints store a freeform path+calc reason and display as-is.
+  // Keep legacy short-code labels for older session stores.
   switch (reason) {
     case "manual":
       return t("sessionsView.manual");
     case "auto-threshold":
       return t("sessionsView.autoThreshold");
+    case "preflight-tokens":
+      return t("sessionsView.preflightTokens");
+    case "preflight-transcript-bytes":
+      return t("sessionsView.preflightTranscriptBytes");
+    case "pre-prompt-precheck":
+      return t("sessionsView.prePromptPrecheck");
+    case "char-overflow-guard":
+      return t("sessionsView.charOverflowGuard");
+    case "midturn-precheck":
+      return t("sessionsView.midturnPrecheck");
     case "overflow-retry":
       return t("sessionsView.overflowRetry");
     case "timeout-retry":

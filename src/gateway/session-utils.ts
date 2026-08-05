@@ -325,12 +325,9 @@ function buildCompactionCheckpointPreview(
   if (!checkpointId || typeof createdAt !== "number" || !Number.isFinite(createdAt)) {
     return undefined;
   }
-  if (
-    reason !== "manual" &&
-    reason !== "auto-threshold" &&
-    reason !== "overflow-retry" &&
-    reason !== "timeout-retry"
-  ) {
+  // `reason` is an operator-facing freeform string (path label + optional gate
+  // calc fields). Accept any non-empty string, including legacy short codes.
+  if (typeof reason !== "string" || !reason.trim()) {
     return undefined;
   }
   return {

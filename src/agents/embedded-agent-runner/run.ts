@@ -105,6 +105,10 @@ import { resolveSessionSuspensionReason, suspendSession } from "../session-suspe
 import { resolveToolLoopDetectionConfig } from "../tool-loop-detection-config.js";
 import { derivePromptTokens, normalizeUsage, type UsageLike } from "../usage.js";
 import { redactRunIdentifier, resolveRunWorkspaceDir } from "../workspace-run.js";
+import {
+  buildOverflowCompactionCheckpointTrigger,
+  resolveOverflowCompactionTriggerPath,
+} from "./compaction-checkpoint-trigger.js";
 import { runPostCompactionSideEffects } from "./compaction-hooks.js";
 import { buildEmbeddedCompactionRuntimeContext } from "./compaction-runtime-context.js";
 import {
@@ -193,6 +197,7 @@ import {
   resolveHookModelSelection,
 } from "./run/setup.js";
 import { mergeAttemptToolMediaPayloads } from "./run/tool-media-payloads.js";
+import { resolveCharOverflowGuardMaxContextChars } from "./tool-result-context-guard.js";
 import {
   resolveLiveToolResultMaxChars,
   sessionLikelyHasOversizedToolResults,
@@ -2034,6 +2039,25 @@ export async function runEmbeddedAgent(
                   ...(attempt.promptCache ? { promptCache: attempt.promptCache } : {}),
                   runId: params.runId,
                   trigger: "timeout_recovery",
+                  checkpointTrigger: {
+                    path: "timeout_retry" as const,
+                    trigger: "budget" as const,
+                    ...(lastTurnPromptTokens != null
+                      ? { promptTokens: Math.floor(lastTurnPromptTokens) }
+                      : {}),
+                    ...(typeof ctxInfo.tokens === "number"
+                      ? {
+                          contextWindowTokens: ctxInfo.tokens,
+                          // Timeout recovery fires when prompt usage exceeds 65% of the window.
+                          thresholdTokens: Math.floor(ctxInfo.tokens * 0.65),
+                        }
+                      : {}),
+                    attempt: timeoutCompactionAttempts,
+                  },
+                  ...(lastTurnPromptTokens != null
+                    ? { currentTokenCount: Math.floor(lastTurnPromptTokens) }
+                    : {}),
+                  contextTokenBudget: ctxInfo.tokens,
                   diagId: timeoutDiagId,
                   attempt: timeoutCompactionAttempts,
                   maxAttempts: MAX_TIMEOUT_COMPACTION_ATTEMPTS,
@@ -2226,9 +2250,43 @@ export async function runEmbeddedAgent(
                   ...(attempt.promptCache ? { promptCache: attempt.promptCache } : {}),
                   runId: params.runId,
                   trigger: "overflow",
+                  checkpointTrigger: buildOverflowCompactionCheckpointTrigger({
+                    path: resolveOverflowCompactionTriggerPath({
+                      preflightRecoverySource: preflightRecovery?.source,
+                      promptErrorSource,
+                      overflowErrorText: errorText,
+                      overflowErrorSource: contextOverflowError.source,
+                    }),
+                    ...(typeof ctxInfo.tokens === "number"
+                      ? {
+                          contextWindowTokens: ctxInfo.tokens,
+                          maxContextChars: resolveCharOverflowGuardMaxContextChars(ctxInfo.tokens),
+                        }
+                      : {}),
+                    ...(observedOverflowTokens !== undefined ? { observedOverflowTokens } : {}),
+                    ...(overflowTokenCountForCompaction !== undefined
+                      ? { compactionTokens: overflowTokenCountForCompaction }
+                      : {}),
+                    attempt: overflowCompactionAttempts,
+                    ...(preflightRecovery?.route ? { overflowRoute: preflightRecovery.route } : {}),
+                    overflowSource:
+                      preflightRecovery?.source === "mid-turn"
+                        ? "mid-turn"
+                        : contextOverflowError.source === "promptError" &&
+                            promptErrorSource === "precheck"
+                          ? "precheck"
+                          : contextOverflowError.source,
+                    // Persist the observed assistant-error text. This may be a
+                    // provider/stream failure, or an OpenClaw transformContext
+                    // guard message absorbed into stopReason=error by agent-core.
+                    ...(contextOverflowError.source === "assistantError"
+                      ? { overflowErrorText: errorText }
+                      : {}),
+                  }),
                   ...(overflowTokenCountForCompaction !== undefined
                     ? { currentTokenCount: overflowTokenCountForCompaction }
                     : {}),
+                  contextTokenBudget: ctxInfo.tokens,
                   diagId: overflowDiagId,
                   attempt: overflowCompactionAttempts,
                   maxAttempts: MAX_OVERFLOW_COMPACTION_ATTEMPTS,

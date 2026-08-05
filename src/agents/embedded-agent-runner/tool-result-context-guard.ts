@@ -28,6 +28,14 @@ const PREEMPTIVE_OVERFLOW_RATIO = 0.9;
 export const PREEMPTIVE_CONTEXT_OVERFLOW_MESSAGE =
   "Context overflow: estimated context size exceeds safe threshold during tool loop.";
 const TOOL_RESULT_ESTIMATE_TO_TEXT_RATIO = 4 / TOOL_RESULT_CHARS_PER_TOKEN_ESTIMATE;
+
+/** Char overflow guard high-water mark used by the tool-loop transformContext path. */
+export function resolveCharOverflowGuardMaxContextChars(contextWindowTokens: number): number {
+  return Math.max(
+    1_024,
+    Math.floor(contextWindowTokens * CHARS_PER_TOKEN_ESTIMATE * PREEMPTIVE_OVERFLOW_RATIO),
+  );
+}
 const TRANSCRIPT_PROMPT_TEXT_KEY = "__openclawTranscriptPromptText";
 
 type GuardableTransformContext = (

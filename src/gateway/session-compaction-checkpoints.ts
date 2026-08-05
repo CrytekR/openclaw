@@ -12,6 +12,7 @@ import { updateSessionStore } from "../config/sessions.js";
 import type {
   SessionCompactionCheckpoint,
   SessionCompactionCheckpointReason,
+  SessionCompactionCheckpointTrigger,
   SessionEntry,
 } from "../config/sessions.js";
 import { isCompactionCheckpointTranscriptFileName } from "../config/sessions/artifacts.js";
@@ -20,6 +21,8 @@ import { CURRENT_SESSION_VERSION } from "../config/sessions/version.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
 import { resolveGatewaySessionStoreTarget } from "./session-utils.js";
+
+export { resolveSessionCompactionCheckpointReason } from "./session-compaction-checkpoint-reason.js";
 
 const log = createSubsystemLogger("gateway/session-compaction-checkpoints");
 const MAX_COMPACTION_CHECKPOINTS_PER_SESSION = 25;
@@ -117,23 +120,6 @@ async function statCheckpointSnapshotBytes(
     }),
   );
   return bytesByPath;
-}
-
-/** Resolve the stored checkpoint reason from compaction trigger state. */
-export function resolveSessionCompactionCheckpointReason(params: {
-  trigger?: "budget" | "overflow" | "manual";
-  timedOut?: boolean;
-}): SessionCompactionCheckpointReason {
-  if (params.trigger === "manual") {
-    return "manual";
-  }
-  if (params.timedOut) {
-    return "timeout-retry";
-  }
-  if (params.trigger === "overflow") {
-    return "overflow-retry";
-  }
-  return "auto-threshold";
 }
 
 const SESSION_HEADER_READ_MAX_BYTES = 64 * 1024;
@@ -478,6 +464,8 @@ export async function persistSessionCompactionCheckpoint(params: {
   sessionKey: string;
   sessionId: string;
   reason: SessionCompactionCheckpointReason;
+  /** Optional gate path + calculation snapshot for this compaction. */
+  trigger?: SessionCompactionCheckpointTrigger;
   snapshot: CapturedCompactionCheckpointSnapshot;
   summary?: string;
   firstKeptEntryId?: string;
@@ -509,6 +497,7 @@ export async function persistSessionCompactionCheckpoint(params: {
     sessionId: params.sessionId,
     createdAt,
     reason: params.reason,
+    ...(params.trigger ? { trigger: params.trigger } : {}),
     ...(typeof params.tokensBefore === "number" ? { tokensBefore: params.tokensBefore } : {}),
     ...(typeof params.tokensAfter === "number" ? { tokensAfter: params.tokensAfter } : {}),
     ...(params.summary?.trim() ? { summary: params.summary.trim() } : {}),

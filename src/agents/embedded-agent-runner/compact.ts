@@ -96,8 +96,8 @@ import { isFallbackSummaryError, runWithModelFallback } from "../model-fallback.
 import { supportsModelTools } from "../model-tool-support.js";
 import { ensureOpenClawModelsJson } from "../models-config.js";
 import { wrapStreamFnTextTransforms } from "../plugin-text-transforms.js";
-import { applyPreparedRuntimeAuthToModel } from "../provider-request-config.js";
 import { resolveAgentPromptSurfaceForSessionKey } from "../prompt-surface.js";
+import { applyPreparedRuntimeAuthToModel } from "../provider-request-config.js";
 import { registerProviderStreamForModel } from "../provider-stream.js";
 import { collectRuntimeChannelCapabilities } from "../runtime-capabilities.js";
 import { buildAgentRuntimePlan } from "../runtime-plan/build.js";
@@ -129,6 +129,7 @@ import type {
   CompactEmbeddedAgentSessionParams,
   CompactionMessageMetrics,
 } from "./compact.types.js";
+import { resolveCompactionCheckpointTriggerFromParams } from "./compaction-checkpoint-trigger.js";
 import { dedupeDuplicateUserMessagesForCompaction } from "./compaction-duplicate-user-messages.js";
 import {
   asCompactionHookRunner,
@@ -1503,13 +1504,23 @@ async function compactEmbeddedAgentSessionDirectOnce(
           });
           if (params.config && params.sessionKey && checkpointSnapshot) {
             try {
+              const checkpointTrigger = resolveCompactionCheckpointTriggerFromParams({
+                checkpointTrigger: params.checkpointTrigger,
+                trigger: params.trigger,
+                preflightCompactionTrigger: params.preflightCompactionTrigger,
+                currentTokenCount: params.currentTokenCount ?? observedTokenCount,
+                contextTokenBudget: params.contextTokenBudget,
+                attempt: params.attempt,
+              });
               const storedCheckpoint = await persistSessionCompactionCheckpoint({
                 cfg: params.config,
                 sessionKey: params.sessionKey,
                 sessionId: activeSessionId,
                 reason: resolveSessionCompactionCheckpointReason({
                   trigger: params.trigger,
+                  checkpointTrigger,
                 }),
+                ...(checkpointTrigger ? { trigger: checkpointTrigger } : {}),
                 snapshot: checkpointSnapshot,
                 summary: result.summary,
                 firstKeptEntryId: effectiveFirstKeptEntryId,

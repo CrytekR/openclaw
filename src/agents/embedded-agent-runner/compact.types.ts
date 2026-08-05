@@ -4,6 +4,7 @@
 import type { SourceReplyDeliveryMode } from "../../auto-reply/get-reply-options.types.js";
 import type { ReasoningLevel, ThinkLevel } from "../../auto-reply/thinking.js";
 import type { ChatType } from "../../channels/chat-type.js";
+import type { SessionCompactionCheckpointTrigger } from "../../config/sessions/types.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import type { ContextEngine, ContextEngineRuntimeContext } from "../../context-engine/types.js";
 import type { CommandQueueEnqueueFn } from "../../process/command-queue.types.js";
@@ -79,7 +80,12 @@ export type CompactEmbeddedAgentSessionParams = {
   preflightRequired?: boolean;
   /** Diagnostic trigger that made preflight compaction mandatory. */
   preflightCompactionTrigger?: "tokens" | "transcript_bytes";
-  trigger?: "budget" | "overflow" | "manual";
+  /**
+   * Gate path + calculation snapshot to persist on the compaction checkpoint.
+   * Callers that already evaluated a threshold/overflow gate should supply this.
+   */
+  checkpointTrigger?: SessionCompactionCheckpointTrigger;
+  trigger?: "budget" | "overflow" | "manual" | "timeout_recovery";
   /**
    * Preflight callers can allow native/current-session harness compaction but
    * move plugin-owned budget compaction onto background turn maintenance.
