@@ -15,6 +15,11 @@ import { NonEmptyString, SessionLabelString } from "./primitives.js";
 export const SessionCompactionCheckpointReasonSchema = Type.Union([
   Type.Literal("manual"),
   Type.Literal("auto-threshold"),
+  Type.Literal("preflight-tokens"),
+  Type.Literal("preflight-transcript-bytes"),
+  Type.Literal("pre-prompt-precheck"),
+  Type.Literal("char-overflow-guard"),
+  Type.Literal("midturn-precheck"),
   Type.Literal("overflow-retry"),
   Type.Literal("timeout-retry"),
 ]);
@@ -23,6 +28,8 @@ export const SessionCompactionCheckpointReasonSchema = Type.Union([
 const SessionCompactionCheckpointTriggerPathSchema = Type.Union([
   Type.Literal("preflight_tokens"),
   Type.Literal("preflight_transcript_bytes"),
+  Type.Literal("pre_prompt_precheck"),
+  Type.Literal("char_overflow_guard"),
   Type.Literal("midturn_precheck"),
   Type.Literal("overflow_retry"),
   Type.Literal("timeout_retry"),

@@ -13,30 +13,40 @@ describe("resolveSessionCompactionCheckpointReason", () => {
     ).toBe("timeout-retry");
   });
 
-  it("maps overflow and mid-turn precheck paths to overflow-retry", () => {
+  it("maps concrete overflow entry paths onto detailed reasons", () => {
     expect(resolveSessionCompactionCheckpointReason({ trigger: "overflow" })).toBe(
       "overflow-retry",
     );
     expect(
       resolveSessionCompactionCheckpointReason({
+        checkpointTrigger: { path: "pre_prompt_precheck", trigger: "overflow" },
+      }),
+    ).toBe("pre-prompt-precheck");
+    expect(
+      resolveSessionCompactionCheckpointReason({
+        checkpointTrigger: { path: "char_overflow_guard", trigger: "overflow" },
+      }),
+    ).toBe("char-overflow-guard");
+    expect(
+      resolveSessionCompactionCheckpointReason({
         checkpointTrigger: { path: "midturn_precheck", trigger: "overflow" },
       }),
-    ).toBe("overflow-retry");
+    ).toBe("midturn-precheck");
   });
 
-  it("keeps preflight token/bytes gates under auto-threshold", () => {
+  it("maps preflight token/bytes gates onto detailed auto reasons", () => {
     expect(
       resolveSessionCompactionCheckpointReason({
         trigger: "budget",
         checkpointTrigger: { path: "preflight_tokens", trigger: "tokens" },
       }),
-    ).toBe("auto-threshold");
+    ).toBe("preflight-tokens");
     expect(
       resolveSessionCompactionCheckpointReason({
         trigger: "budget",
         checkpointTrigger: { path: "preflight_transcript_bytes", trigger: "transcript_bytes" },
       }),
-    ).toBe("auto-threshold");
+    ).toBe("preflight-transcript-bytes");
   });
 
   it("maps manual trigger to manual", () => {

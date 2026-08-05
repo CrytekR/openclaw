@@ -3,6 +3,7 @@ import {
   buildCheckpointTriggerFromPreflightDetails,
   normalizeSessionCompactionCheckpointTrigger,
   resolveCompactionCheckpointTriggerFromParams,
+  resolveOverflowCompactionTriggerPath,
 } from "./compaction-checkpoint-trigger.js";
 
 describe("compaction-checkpoint-trigger", () => {
@@ -124,5 +125,32 @@ describe("compaction-checkpoint-trigger", () => {
         attempt: 0,
       }),
     ).toEqual({ path: "manual" });
+  });
+
+  it("classifies overflow recovery into detailed entry paths", () => {
+    expect(
+      resolveOverflowCompactionTriggerPath({
+        preflightRecoverySource: "mid-turn",
+        promptErrorSource: "precheck",
+      }),
+    ).toBe("midturn_precheck");
+    expect(
+      resolveOverflowCompactionTriggerPath({
+        overflowErrorText:
+          "Context overflow: estimated context size exceeds safe threshold during tool loop.",
+        promptErrorSource: "prompt",
+      }),
+    ).toBe("char_overflow_guard");
+    expect(
+      resolveOverflowCompactionTriggerPath({
+        promptErrorSource: "precheck",
+      }),
+    ).toBe("pre_prompt_precheck");
+    expect(
+      resolveOverflowCompactionTriggerPath({
+        promptErrorSource: "prompt",
+        overflowErrorText: "prompt is too long",
+      }),
+    ).toBe("overflow_retry");
   });
 });

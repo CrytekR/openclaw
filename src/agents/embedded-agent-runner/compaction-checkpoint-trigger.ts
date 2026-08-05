@@ -79,6 +79,8 @@ export function normalizeSessionCompactionCheckpointTrigger(
   if (
     path !== "preflight_tokens" &&
     path !== "preflight_transcript_bytes" &&
+    path !== "pre_prompt_precheck" &&
+    path !== "char_overflow_guard" &&
     path !== "midturn_precheck" &&
     path !== "overflow_retry" &&
     path !== "timeout_retry" &&
@@ -170,6 +172,35 @@ export function buildCheckpointTriggerFromPreflightDetails(params: {
       ? { maxActiveTranscriptBytes: params.details.maxActiveTranscriptBytes }
       : {}),
   })!;
+}
+
+/**
+ * Classify an overflow-recovery compaction into the concrete entry path that
+ * operators expect to see on checkpoint `reason` / `trigger.path`.
+ */
+export function resolveOverflowCompactionTriggerPath(params: {
+  preflightRecoverySource?: "mid-turn";
+  promptErrorSource?: string | null;
+  overflowErrorText?: string;
+}): Extract<
+  SessionCompactionCheckpointTriggerPath,
+  "pre_prompt_precheck" | "char_overflow_guard" | "midturn_precheck" | "overflow_retry"
+> {
+  if (params.preflightRecoverySource === "mid-turn") {
+    return "midturn_precheck";
+  }
+  // Char overflow guard throws during the tool-loop transformContext path with
+  // this exact message; keep matching the product string, not a broad heuristic.
+  if (
+    typeof params.overflowErrorText === "string" &&
+    params.overflowErrorText.includes("exceeds safe threshold during tool loop")
+  ) {
+    return "char_overflow_guard";
+  }
+  if (params.promptErrorSource === "precheck") {
+    return "pre_prompt_precheck";
+  }
+  return "overflow_retry";
 }
 
 /**

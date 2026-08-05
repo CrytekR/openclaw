@@ -393,6 +393,11 @@ export type SubagentRunState = "active" | "interrupted" | "historical";
 export type SessionCompactionCheckpointReason =
   | "manual"
   | "auto-threshold"
+  | "preflight-tokens"
+  | "preflight-transcript-bytes"
+  | "pre-prompt-precheck"
+  | "char-overflow-guard"
+  | "midturn-precheck"
   | "overflow-retry"
   | "timeout-retry";
 

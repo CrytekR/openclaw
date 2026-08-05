@@ -328,6 +328,11 @@ function buildCompactionCheckpointPreview(
   if (
     reason !== "manual" &&
     reason !== "auto-threshold" &&
+    reason !== "preflight-tokens" &&
+    reason !== "preflight-transcript-bytes" &&
+    reason !== "pre-prompt-precheck" &&
+    reason !== "char-overflow-guard" &&
+    reason !== "midturn-precheck" &&
     reason !== "overflow-retry" &&
     reason !== "timeout-retry"
   ) {

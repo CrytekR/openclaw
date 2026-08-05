@@ -57,19 +57,30 @@ export type CliSessionBinding = {
   mcpResumeHash?: string;
 };
 
+/**
+ * Compaction checkpoint reason naming the concrete entry path.
+ * UI and operators read this field first; keep values stable and specific.
+ */
 export type SessionCompactionCheckpointReason =
   | "manual"
   | "auto-threshold"
+  | "preflight-tokens"
+  | "preflight-transcript-bytes"
+  | "pre-prompt-precheck"
+  | "char-overflow-guard"
+  | "midturn-precheck"
   | "overflow-retry"
   | "timeout-retry";
 
 /**
  * Specific compaction entry path that produced a checkpoint.
- * Coarser `reason` remains for branch/restore UI; `path` names the gate.
+ * Mirrors `reason` with underscore form for trigger snapshots / calc payloads.
  */
 export type SessionCompactionCheckpointTriggerPath =
   | "preflight_tokens"
   | "preflight_transcript_bytes"
+  | "pre_prompt_precheck"
+  | "char_overflow_guard"
   | "midturn_precheck"
   | "overflow_retry"
   | "timeout_retry"

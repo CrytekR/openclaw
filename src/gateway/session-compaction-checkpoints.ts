@@ -133,8 +133,28 @@ export function resolveSessionCompactionCheckpointReason(params: {
   if (params.timedOut || params.trigger === "timeout_recovery" || path === "timeout_retry") {
     return "timeout-retry";
   }
-  if (params.trigger === "overflow" || path === "overflow_retry" || path === "midturn_precheck") {
+  // Prefer the concrete gate path so operators can read detailed entry routes
+  // directly from `reason` without inspecting the optional trigger snapshot.
+  if (path === "preflight_tokens") {
+    return "preflight-tokens";
+  }
+  if (path === "preflight_transcript_bytes") {
+    return "preflight-transcript-bytes";
+  }
+  if (path === "pre_prompt_precheck") {
+    return "pre-prompt-precheck";
+  }
+  if (path === "char_overflow_guard") {
+    return "char-overflow-guard";
+  }
+  if (path === "midturn_precheck") {
+    return "midturn-precheck";
+  }
+  if (path === "overflow_retry" || params.trigger === "overflow") {
     return "overflow-retry";
+  }
+  if (path === "auto_threshold") {
+    return "auto-threshold";
   }
   return "auto-threshold";
 }

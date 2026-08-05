@@ -105,6 +105,7 @@ import { resolveSessionSuspensionReason, suspendSession } from "../session-suspe
 import { resolveToolLoopDetectionConfig } from "../tool-loop-detection-config.js";
 import { derivePromptTokens, normalizeUsage, type UsageLike } from "../usage.js";
 import { redactRunIdentifier, resolveRunWorkspaceDir } from "../workspace-run.js";
+import { resolveOverflowCompactionTriggerPath } from "./compaction-checkpoint-trigger.js";
 import { runPostCompactionSideEffects } from "./compaction-hooks.js";
 import { buildEmbeddedCompactionRuntimeContext } from "./compaction-runtime-context.js";
 import {
@@ -2246,10 +2247,11 @@ export async function runEmbeddedAgent(
                   runId: params.runId,
                   trigger: "overflow",
                   checkpointTrigger: {
-                    path:
-                      preflightRecovery?.source === "mid-turn"
-                        ? ("midturn_precheck" as const)
-                        : ("overflow_retry" as const),
+                    path: resolveOverflowCompactionTriggerPath({
+                      preflightRecoverySource: preflightRecovery?.source,
+                      promptErrorSource,
+                      overflowErrorText: errorText,
+                    }),
                     trigger: "overflow" as const,
                     ...(overflowTokenCountForCompaction !== undefined
                       ? { projectedTokens: overflowTokenCountForCompaction }

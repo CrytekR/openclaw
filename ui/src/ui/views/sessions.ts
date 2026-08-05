@@ -345,6 +345,16 @@ function formatCheckpointReason(reason: SessionCompactionCheckpoint["reason"]): 
       return t("sessionsView.manual");
     case "auto-threshold":
       return t("sessionsView.autoThreshold");
+    case "preflight-tokens":
+      return t("sessionsView.preflightTokens");
+    case "preflight-transcript-bytes":
+      return t("sessionsView.preflightTranscriptBytes");
+    case "pre-prompt-precheck":
+      return t("sessionsView.prePromptPrecheck");
+    case "char-overflow-guard":
+      return t("sessionsView.charOverflowGuard");
+    case "midturn-precheck":
+      return t("sessionsView.midturnPrecheck");
     case "overflow-retry":
       return t("sessionsView.overflowRetry");
     case "timeout-retry":
