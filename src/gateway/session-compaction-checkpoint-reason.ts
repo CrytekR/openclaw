@@ -1,6 +1,6 @@
 /**
  * Builds the operator-facing compaction checkpoint `reason` string.
- * Includes the concrete entry-path label plus available gate calc numbers.
+ * Includes the concrete entry-path label plus path-specific gate calc numbers.
  */
 import type {
   SessionCompactionCheckpointReason,
@@ -48,22 +48,43 @@ function pushFiniteIntField(parts: string[], key: string, value: unknown): void 
   parts.push(`${key}=${Math.floor(value)}`);
 }
 
-/** Append gate evaluation numbers so operators can read them from `reason`. */
-export function appendCompactionCheckpointReasonGateCalc(
+function appendPreflightTokenGateCalc(
   parts: string[],
-  trigger: SessionCompactionCheckpointTrigger | undefined,
+  trigger: SessionCompactionCheckpointTrigger,
 ): void {
-  if (!trigger) {
-    return;
-  }
   pushFiniteIntField(parts, "projectedTokens", trigger.projectedTokens);
   pushFiniteIntField(parts, "thresholdTokens", trigger.thresholdTokens);
   pushFiniteIntField(parts, "contextWindowTokens", trigger.contextWindowTokens);
+  const breakdown = trigger.projectedBreakdown;
+  if (!breakdown) {
+    return;
+  }
+  parts.push(`breakdownSource=${breakdown.source}`);
+  pushFiniteIntField(parts, "baseTokens", breakdown.baseTokens);
+  pushFiniteIntField(parts, "lastOutputTokens", breakdown.lastOutputTokens);
+  pushFiniteIntField(parts, "promptEstimateTokens", breakdown.promptEstimateTokens);
+  if (breakdown.recountMethod) {
+    parts.push(`recountMethod=${breakdown.recountMethod}`);
+  }
+}
+
+function appendPreflightTranscriptBytesGateCalc(
+  parts: string[],
+  trigger: SessionCompactionCheckpointTrigger,
+): void {
   pushFiniteIntField(parts, "activeTranscriptBytes", trigger.activeTranscriptBytes);
   pushFiniteIntField(parts, "maxActiveTranscriptBytes", trigger.maxActiveTranscriptBytes);
+  pushFiniteIntField(parts, "contextWindowTokens", trigger.contextWindowTokens);
+}
+
+function appendPrecheckGateCalc(
+  parts: string[],
+  trigger: SessionCompactionCheckpointTrigger,
+): void {
   pushFiniteIntField(parts, "estimatedPromptTokens", trigger.estimatedPromptTokens);
   pushFiniteIntField(parts, "promptBudgetBeforeReserve", trigger.promptBudgetBeforeReserve);
   pushFiniteIntField(parts, "overflowTokens", trigger.overflowTokens);
+  pushFiniteIntField(parts, "contextWindowTokens", trigger.contextWindowTokens);
   pushFiniteIntField(parts, "attempt", trigger.attempt);
   if (trigger.overflowRoute) {
     parts.push(`overflowRoute=${trigger.overflowRoute}`);
@@ -71,15 +92,86 @@ export function appendCompactionCheckpointReasonGateCalc(
   if (trigger.overflowSource) {
     parts.push(`overflowSource=${trigger.overflowSource}`);
   }
-  const breakdown = trigger.projectedBreakdown;
-  if (breakdown) {
-    parts.push(`breakdownSource=${breakdown.source}`);
-    pushFiniteIntField(parts, "baseTokens", breakdown.baseTokens);
-    pushFiniteIntField(parts, "lastOutputTokens", breakdown.lastOutputTokens);
-    pushFiniteIntField(parts, "promptEstimateTokens", breakdown.promptEstimateTokens);
-    if (breakdown.recountMethod) {
-      parts.push(`recountMethod=${breakdown.recountMethod}`);
-    }
+}
+
+function appendCharOverflowGuardGateCalc(
+  parts: string[],
+  trigger: SessionCompactionCheckpointTrigger,
+): void {
+  pushFiniteIntField(parts, "estimatedContextChars", trigger.estimatedContextChars);
+  pushFiniteIntField(parts, "maxContextChars", trigger.maxContextChars);
+  pushFiniteIntField(parts, "contextWindowTokens", trigger.contextWindowTokens);
+  pushFiniteIntField(parts, "attempt", trigger.attempt);
+  if (trigger.overflowSource) {
+    parts.push(`overflowSource=${trigger.overflowSource}`);
+  }
+}
+
+function appendOverflowRetryGateCalc(
+  parts: string[],
+  trigger: SessionCompactionCheckpointTrigger,
+): void {
+  pushFiniteIntField(parts, "observedOverflowTokens", trigger.observedOverflowTokens);
+  pushFiniteIntField(parts, "compactionTokens", trigger.compactionTokens);
+  pushFiniteIntField(parts, "contextWindowTokens", trigger.contextWindowTokens);
+  pushFiniteIntField(parts, "attempt", trigger.attempt);
+  if (trigger.overflowSource) {
+    parts.push(`overflowSource=${trigger.overflowSource}`);
+  }
+}
+
+function appendTimeoutRetryGateCalc(
+  parts: string[],
+  trigger: SessionCompactionCheckpointTrigger,
+): void {
+  pushFiniteIntField(parts, "promptTokens", trigger.promptTokens);
+  pushFiniteIntField(parts, "thresholdTokens", trigger.thresholdTokens);
+  pushFiniteIntField(parts, "contextWindowTokens", trigger.contextWindowTokens);
+  pushFiniteIntField(parts, "attempt", trigger.attempt);
+}
+
+function appendManualOrAutoGateCalc(
+  parts: string[],
+  trigger: SessionCompactionCheckpointTrigger,
+): void {
+  pushFiniteIntField(parts, "contextWindowTokens", trigger.contextWindowTokens);
+  pushFiniteIntField(parts, "projectedTokens", trigger.projectedTokens);
+  pushFiniteIntField(parts, "thresholdTokens", trigger.thresholdTokens);
+}
+
+/** Append path-specific gate evaluation numbers onto the reason string. */
+export function appendCompactionCheckpointReasonGateCalc(
+  parts: string[],
+  path: SessionCompactionCheckpointTriggerPath,
+  trigger: SessionCompactionCheckpointTrigger | undefined,
+): void {
+  if (!trigger) {
+    return;
+  }
+  switch (path) {
+    case "preflight_tokens":
+      appendPreflightTokenGateCalc(parts, trigger);
+      return;
+    case "preflight_transcript_bytes":
+      appendPreflightTranscriptBytesGateCalc(parts, trigger);
+      return;
+    case "pre_prompt_precheck":
+    case "midturn_precheck":
+      appendPrecheckGateCalc(parts, trigger);
+      return;
+    case "char_overflow_guard":
+      appendCharOverflowGuardGateCalc(parts, trigger);
+      return;
+    case "overflow_retry":
+      appendOverflowRetryGateCalc(parts, trigger);
+      return;
+    case "timeout_retry":
+      appendTimeoutRetryGateCalc(parts, trigger);
+      return;
+    case "manual":
+    case "auto_threshold":
+      appendManualOrAutoGateCalc(parts, trigger);
+      return;
   }
 }
 
@@ -91,6 +183,6 @@ export function resolveSessionCompactionCheckpointReason(params: {
 }): SessionCompactionCheckpointReason {
   const path = resolveCheckpointReasonPath(params);
   const parts = [CHECKPOINT_REASON_PATH_LABELS[path]];
-  appendCompactionCheckpointReasonGateCalc(parts, params.checkpointTrigger);
+  appendCompactionCheckpointReasonGateCalc(parts, path, params.checkpointTrigger);
   return parts.join(" ");
 }

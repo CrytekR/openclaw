@@ -121,6 +121,11 @@ export function normalizeSessionCompactionCheckpointTrigger(
   const estimatedPromptTokens = readPositiveInt(value.estimatedPromptTokens);
   const promptBudgetBeforeReserve = readPositiveInt(value.promptBudgetBeforeReserve);
   const overflowTokens = readPositiveInt(value.overflowTokens);
+  const promptTokens = readPositiveInt(value.promptTokens);
+  const observedOverflowTokens = readPositiveInt(value.observedOverflowTokens);
+  const compactionTokens = readPositiveInt(value.compactionTokens);
+  const estimatedContextChars = readPositiveInt(value.estimatedContextChars);
+  const maxContextChars = readPositiveInt(value.maxContextChars);
   return {
     path,
     ...(trigger ? { trigger } : {}),
@@ -136,6 +141,11 @@ export function normalizeSessionCompactionCheckpointTrigger(
     ...(estimatedPromptTokens !== undefined ? { estimatedPromptTokens } : {}),
     ...(promptBudgetBeforeReserve !== undefined ? { promptBudgetBeforeReserve } : {}),
     ...(overflowTokens !== undefined ? { overflowTokens } : {}),
+    ...(promptTokens !== undefined ? { promptTokens } : {}),
+    ...(observedOverflowTokens !== undefined ? { observedOverflowTokens } : {}),
+    ...(compactionTokens !== undefined ? { compactionTokens } : {}),
+    ...(estimatedContextChars !== undefined ? { estimatedContextChars } : {}),
+    ...(maxContextChars !== undefined ? { maxContextChars } : {}),
   };
 }
 
@@ -208,6 +218,77 @@ export function resolveOverflowCompactionTriggerPath(params: {
 }
 
 /**
+ * Build the path-specific overflow-recovery checkpoint trigger snapshot.
+ * Keeps each path's gate fields distinct so reason strings do not reuse
+ * preflight `projectedTokens` for provider/char/precheck recovery math.
+ */
+export function buildOverflowCompactionCheckpointTrigger(params: {
+  path: Extract<
+    SessionCompactionCheckpointTriggerPath,
+    "pre_prompt_precheck" | "char_overflow_guard" | "midturn_precheck" | "overflow_retry"
+  >;
+  contextWindowTokens?: number;
+  observedOverflowTokens?: number;
+  compactionTokens?: number;
+  attempt: number;
+  overflowRoute?: SessionCompactionCheckpointTrigger["overflowRoute"];
+  overflowSource?: SessionCompactionCheckpointTrigger["overflowSource"];
+  estimatedPromptTokens?: number;
+  promptBudgetBeforeReserve?: number;
+  overflowTokens?: number;
+  maxContextChars?: number;
+  estimatedContextChars?: number;
+}): SessionCompactionCheckpointTrigger {
+  const shared = {
+    path: params.path,
+    trigger: "overflow" as const,
+    attempt: params.attempt,
+    ...(typeof params.contextWindowTokens === "number"
+      ? { contextWindowTokens: params.contextWindowTokens }
+      : {}),
+    ...(params.overflowRoute ? { overflowRoute: params.overflowRoute } : {}),
+    ...(params.overflowSource ? { overflowSource: params.overflowSource } : {}),
+  };
+
+  if (params.path === "char_overflow_guard") {
+    return normalizeSessionCompactionCheckpointTrigger({
+      ...shared,
+      ...(typeof params.maxContextChars === "number"
+        ? { maxContextChars: params.maxContextChars }
+        : {}),
+      ...(typeof params.estimatedContextChars === "number"
+        ? { estimatedContextChars: params.estimatedContextChars }
+        : {}),
+    })!;
+  }
+
+  if (params.path === "pre_prompt_precheck" || params.path === "midturn_precheck") {
+    return normalizeSessionCompactionCheckpointTrigger({
+      ...shared,
+      ...(typeof params.estimatedPromptTokens === "number"
+        ? { estimatedPromptTokens: params.estimatedPromptTokens }
+        : {}),
+      ...(typeof params.promptBudgetBeforeReserve === "number"
+        ? { promptBudgetBeforeReserve: params.promptBudgetBeforeReserve }
+        : {}),
+      ...(typeof params.overflowTokens === "number"
+        ? { overflowTokens: params.overflowTokens }
+        : {}),
+    })!;
+  }
+
+  return normalizeSessionCompactionCheckpointTrigger({
+    ...shared,
+    ...(typeof params.observedOverflowTokens === "number"
+      ? { observedOverflowTokens: params.observedOverflowTokens }
+      : {}),
+    ...(typeof params.compactionTokens === "number"
+      ? { compactionTokens: params.compactionTokens }
+      : {}),
+  })!;
+}
+
+/**
  * Infer a checkpoint trigger snapshot from compact() params when the caller
  * did not supply an explicit gate evaluation record.
  */
@@ -228,8 +309,14 @@ export function resolveCompactionCheckpointTriggerFromParams(params: {
     return normalizeSessionCompactionCheckpointTrigger({
       path: "timeout_retry",
       trigger: "budget",
+      ...(typeof params.currentTokenCount === "number"
+        ? { promptTokens: params.currentTokenCount }
+        : {}),
       ...(typeof params.contextTokenBudget === "number"
-        ? { contextWindowTokens: params.contextTokenBudget }
+        ? {
+            contextWindowTokens: params.contextTokenBudget,
+            thresholdTokens: Math.floor(params.contextTokenBudget * 0.65),
+          }
         : {}),
       ...(typeof params.attempt === "number" ? { attempt: params.attempt } : {}),
     });
@@ -240,7 +327,7 @@ export function resolveCompactionCheckpointTriggerFromParams(params: {
       path: "overflow_retry",
       trigger: "overflow",
       ...(typeof params.currentTokenCount === "number"
-        ? { projectedTokens: params.currentTokenCount }
+        ? { compactionTokens: params.currentTokenCount }
         : {}),
       ...(typeof params.contextTokenBudget === "number"
         ? { contextWindowTokens: params.contextTokenBudget }

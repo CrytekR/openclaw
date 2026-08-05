@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildCheckpointTriggerFromPreflightDetails,
+  buildOverflowCompactionCheckpointTrigger,
   normalizeSessionCompactionCheckpointTrigger,
   resolveCompactionCheckpointTriggerFromParams,
   resolveOverflowCompactionTriggerPath,
@@ -91,12 +92,15 @@ describe("compaction-checkpoint-trigger", () => {
     expect(
       resolveCompactionCheckpointTriggerFromParams({
         trigger: "timeout_recovery",
+        currentTokenCount: 70_000,
         contextTokenBudget: 100_000,
         attempt: 2,
       }),
     ).toEqual({
       path: "timeout_retry",
       trigger: "budget",
+      promptTokens: 70_000,
+      thresholdTokens: 65_000,
       contextWindowTokens: 100_000,
       attempt: 2,
     });
@@ -111,9 +115,47 @@ describe("compaction-checkpoint-trigger", () => {
     ).toEqual({
       path: "overflow_retry",
       trigger: "overflow",
-      projectedTokens: 210_000,
+      compactionTokens: 210_000,
       contextWindowTokens: 200_000,
       attempt: 1,
+    });
+  });
+
+  it("builds path-specific overflow checkpoint trigger snapshots", () => {
+    expect(
+      buildOverflowCompactionCheckpointTrigger({
+        path: "overflow_retry",
+        observedOverflowTokens: 130_000,
+        compactionTokens: 130_000,
+        contextWindowTokens: 128_000,
+        attempt: 1,
+        overflowSource: "assistantError",
+      }),
+    ).toEqual({
+      path: "overflow_retry",
+      trigger: "overflow",
+      observedOverflowTokens: 130_000,
+      compactionTokens: 130_000,
+      contextWindowTokens: 128_000,
+      attempt: 1,
+      overflowSource: "assistantError",
+    });
+    expect(
+      buildOverflowCompactionCheckpointTrigger({
+        path: "char_overflow_guard",
+        maxContextChars: 460_800,
+        contextWindowTokens: 128_000,
+        compactionTokens: 128_001,
+        attempt: 1,
+        overflowSource: "promptError",
+      }),
+    ).toEqual({
+      path: "char_overflow_guard",
+      trigger: "overflow",
+      maxContextChars: 460_800,
+      contextWindowTokens: 128_000,
+      attempt: 1,
+      overflowSource: "promptError",
     });
   });
 

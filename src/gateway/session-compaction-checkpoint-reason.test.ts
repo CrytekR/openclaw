@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { resolveSessionCompactionCheckpointReason } from "./session-compaction-checkpoint-reason.js";
 
 describe("resolveSessionCompactionCheckpointReason", () => {
-  it("maps timeout recovery onto a Timeout retry reason", () => {
+  it("formats timeout recovery with promptTokens and 65% threshold", () => {
     expect(resolveSessionCompactionCheckpointReason({ trigger: "timeout_recovery" })).toBe(
       "Timeout retry",
     );
@@ -11,18 +11,18 @@ describe("resolveSessionCompactionCheckpointReason", () => {
         checkpointTrigger: {
           path: "timeout_retry",
           trigger: "budget",
-          projectedTokens: 70_000,
+          promptTokens: 70_000,
           thresholdTokens: 65_000,
           contextWindowTokens: 100_000,
           attempt: 2,
         },
       }),
     ).toBe(
-      "Timeout retry projectedTokens=70000 thresholdTokens=65000 contextWindowTokens=100000 attempt=2",
+      "Timeout retry promptTokens=70000 thresholdTokens=65000 contextWindowTokens=100000 attempt=2",
     );
   });
 
-  it("embeds gate calc numbers for detailed overflow entry paths", () => {
+  it("formats overflow paths with path-specific gate fields", () => {
     expect(resolveSessionCompactionCheckpointReason({ trigger: "overflow" })).toBe(
       "Overflow retry",
     );
@@ -41,35 +41,53 @@ describe("resolveSessionCompactionCheckpointReason", () => {
         },
       }),
     ).toBe(
-      "Pre-prompt precheck contextWindowTokens=200000 estimatedPromptTokens=210000 promptBudgetBeforeReserve=180000 overflowTokens=30000 attempt=1 overflowRoute=compact_only overflowSource=precheck",
+      "Pre-prompt precheck estimatedPromptTokens=210000 promptBudgetBeforeReserve=180000 overflowTokens=30000 contextWindowTokens=200000 attempt=1 overflowRoute=compact_only overflowSource=precheck",
     );
     expect(
       resolveSessionCompactionCheckpointReason({
         checkpointTrigger: {
           path: "char_overflow_guard",
           trigger: "overflow",
-          projectedTokens: 220_001,
-          contextWindowTokens: 200_000,
+          estimatedContextChars: 500_000,
+          maxContextChars: 460_800,
+          contextWindowTokens: 128_000,
           attempt: 1,
+          overflowSource: "promptError",
         },
       }),
-    ).toBe("Char overflow guard projectedTokens=220001 contextWindowTokens=200000 attempt=1");
+    ).toBe(
+      "Char overflow guard estimatedContextChars=500000 maxContextChars=460800 contextWindowTokens=128000 attempt=1 overflowSource=promptError",
+    );
+    expect(
+      resolveSessionCompactionCheckpointReason({
+        checkpointTrigger: {
+          path: "overflow_retry",
+          trigger: "overflow",
+          compactionTokens: 128_001,
+          contextWindowTokens: 128_000,
+          attempt: 1,
+          overflowSource: "assistantError",
+        },
+      }),
+    ).toBe(
+      "Overflow retry compactionTokens=128001 contextWindowTokens=128000 attempt=1 overflowSource=assistantError",
+    );
     expect(
       resolveSessionCompactionCheckpointReason({
         checkpointTrigger: {
           path: "midturn_precheck",
           trigger: "overflow",
-          projectedTokens: 190_000,
+          estimatedPromptTokens: 190_000,
           overflowRoute: "compact_then_truncate",
           overflowSource: "mid-turn",
         },
       }),
     ).toBe(
-      "Mid-turn precheck projectedTokens=190000 overflowRoute=compact_then_truncate overflowSource=mid-turn",
+      "Mid-turn precheck estimatedPromptTokens=190000 overflowRoute=compact_then_truncate overflowSource=mid-turn",
     );
   });
 
-  it("embeds preflight projection and transcript-byte gate numbers", () => {
+  it("formats preflight token and transcript-byte gates separately", () => {
     expect(
       resolveSessionCompactionCheckpointReason({
         trigger: "budget",
@@ -105,7 +123,7 @@ describe("resolveSessionCompactionCheckpointReason", () => {
         },
       }),
     ).toBe(
-      "Preflight transcript bytes projectedTokens=50000 thresholdTokens=40000 contextWindowTokens=100000 activeTranscriptBytes=3000000 maxActiveTranscriptBytes=2000000",
+      "Preflight transcript bytes activeTranscriptBytes=3000000 maxActiveTranscriptBytes=2000000 contextWindowTokens=100000",
     );
   });
 

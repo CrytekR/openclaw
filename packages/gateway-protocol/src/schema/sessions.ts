@@ -96,6 +96,11 @@ const SessionCompactionCheckpointTriggerSchema = Type.Object(
     estimatedPromptTokens: Type.Optional(Type.Integer({ minimum: 0 })),
     promptBudgetBeforeReserve: Type.Optional(Type.Integer({ minimum: 0 })),
     overflowTokens: Type.Optional(Type.Integer({ minimum: 0 })),
+    promptTokens: Type.Optional(Type.Integer({ minimum: 0 })),
+    observedOverflowTokens: Type.Optional(Type.Integer({ minimum: 0 })),
+    compactionTokens: Type.Optional(Type.Integer({ minimum: 0 })),
+    estimatedContextChars: Type.Optional(Type.Integer({ minimum: 0 })),
+    maxContextChars: Type.Optional(Type.Integer({ minimum: 0 })),
   },
   { additionalProperties: false },
 );

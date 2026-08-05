@@ -96,11 +96,21 @@ export type SessionCompactionCheckpointProjectedBreakdown = {
 /**
  * Gate evaluation snapshot persisted with a compaction checkpoint so operators
  * can see which path fired and the numbers that crossed the threshold.
+ *
+ * Field meaning is path-specific:
+ * - preflight_tokens: projectedTokens / thresholdTokens / projectedBreakdown
+ * - preflight_transcript_bytes: activeTranscriptBytes / maxActiveTranscriptBytes
+ * - pre_prompt_precheck / midturn_precheck: estimatedPromptTokens / promptBudget /
+ *   overflowTokens / overflowRoute
+ * - char_overflow_guard: estimatedContextChars / maxContextChars
+ * - overflow_retry: observedOverflowTokens / compactionTokens / contextWindowTokens
+ * - timeout_retry: promptTokens / thresholdTokens (65% window) / contextWindowTokens
  */
 export type SessionCompactionCheckpointTrigger = {
   path: SessionCompactionCheckpointTriggerPath;
   /** Coarse trigger family aligned with compaction agent-event payloads. */
   trigger?: "tokens" | "transcript_bytes" | "overflow" | "manual" | "threshold" | "budget";
+  /** Preflight token projection (preflight_tokens / transcript_bytes diagnostics). */
   projectedTokens?: number;
   projectedBreakdown?: SessionCompactionCheckpointProjectedBreakdown;
   /** Soft/token-budget threshold used by the gate (tokens). */
@@ -118,6 +128,16 @@ export type SessionCompactionCheckpointTrigger = {
   estimatedPromptTokens?: number;
   promptBudgetBeforeReserve?: number;
   overflowTokens?: number;
+  /** Timeout recovery: last-turn prompt tokens that crossed the 65% gate. */
+  promptTokens?: number;
+  /** Overflow recovery: token count parsed from provider/assistant error text. */
+  observedOverflowTokens?: number;
+  /** Overflow recovery: token count handed to compaction (observed or window+1). */
+  compactionTokens?: number;
+  /** Char overflow guard: estimated aggregate context chars when known. */
+  estimatedContextChars?: number;
+  /** Char overflow guard: high-water mark in estimated chars (window*4*0.9). */
+  maxContextChars?: number;
 };
 
 export type SessionCompactionTranscriptReference = {

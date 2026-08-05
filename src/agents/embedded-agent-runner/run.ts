@@ -105,7 +105,10 @@ import { resolveSessionSuspensionReason, suspendSession } from "../session-suspe
 import { resolveToolLoopDetectionConfig } from "../tool-loop-detection-config.js";
 import { derivePromptTokens, normalizeUsage, type UsageLike } from "../usage.js";
 import { redactRunIdentifier, resolveRunWorkspaceDir } from "../workspace-run.js";
-import { resolveOverflowCompactionTriggerPath } from "./compaction-checkpoint-trigger.js";
+import {
+  buildOverflowCompactionCheckpointTrigger,
+  resolveOverflowCompactionTriggerPath,
+} from "./compaction-checkpoint-trigger.js";
 import { runPostCompactionSideEffects } from "./compaction-hooks.js";
 import { buildEmbeddedCompactionRuntimeContext } from "./compaction-runtime-context.js";
 import {
@@ -194,6 +197,7 @@ import {
   resolveHookModelSelection,
 } from "./run/setup.js";
 import { mergeAttemptToolMediaPayloads } from "./run/tool-media-payloads.js";
+import { resolveCharOverflowGuardMaxContextChars } from "./tool-result-context-guard.js";
 import {
   resolveLiveToolResultMaxChars,
   sessionLikelyHasOversizedToolResults,
@@ -2039,7 +2043,7 @@ export async function runEmbeddedAgent(
                     path: "timeout_retry" as const,
                     trigger: "budget" as const,
                     ...(lastTurnPromptTokens != null
-                      ? { projectedTokens: Math.floor(lastTurnPromptTokens) }
+                      ? { promptTokens: Math.floor(lastTurnPromptTokens) }
                       : {}),
                     ...(typeof ctxInfo.tokens === "number"
                       ? {
@@ -2246,22 +2250,22 @@ export async function runEmbeddedAgent(
                   ...(attempt.promptCache ? { promptCache: attempt.promptCache } : {}),
                   runId: params.runId,
                   trigger: "overflow",
-                  checkpointTrigger: {
+                  checkpointTrigger: buildOverflowCompactionCheckpointTrigger({
                     path: resolveOverflowCompactionTriggerPath({
                       preflightRecoverySource: preflightRecovery?.source,
                       promptErrorSource,
                       overflowErrorText: errorText,
                       overflowErrorSource: contextOverflowError.source,
                     }),
-                    trigger: "overflow" as const,
-                    ...(overflowTokenCountForCompaction !== undefined
-                      ? { projectedTokens: overflowTokenCountForCompaction }
-                      : {}),
                     ...(typeof ctxInfo.tokens === "number"
                       ? {
                           contextWindowTokens: ctxInfo.tokens,
-                          thresholdTokens: ctxInfo.tokens,
+                          maxContextChars: resolveCharOverflowGuardMaxContextChars(ctxInfo.tokens),
                         }
+                      : {}),
+                    ...(observedOverflowTokens !== undefined ? { observedOverflowTokens } : {}),
+                    ...(overflowTokenCountForCompaction !== undefined
+                      ? { compactionTokens: overflowTokenCountForCompaction }
                       : {}),
                     attempt: overflowCompactionAttempts,
                     ...(preflightRecovery?.route ? { overflowRoute: preflightRecovery.route } : {}),
@@ -2272,7 +2276,7 @@ export async function runEmbeddedAgent(
                             promptErrorSource === "precheck"
                           ? "precheck"
                           : contextOverflowError.source,
-                  },
+                  }),
                   ...(overflowTokenCountForCompaction !== undefined
                     ? { currentTokenCount: overflowTokenCountForCompaction }
                     : {}),
