@@ -349,6 +349,10 @@
   - changed-files:
       - any-glob-to-any-file:
           - "extensions/llm-task/**"
+"extensions: tokenizer-threshold":
+  - changed-files:
+      - any-glob-to-any-file:
+          - "extensions/tokenizer-threshold/**"
 "extensions: lobster":
   - changed-files:
       - any-glob-to-any-file:
