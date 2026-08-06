@@ -26,13 +26,9 @@ describe("createTokenizerThresholdContextEngine", () => {
     });
   });
 
-  it("windows over-threshold prompts in assemble without compacting", async () => {
+  it("passes assemble messages through without compacting or windowing", async () => {
     const engine = createTokenizerThresholdContextEngine({
       config: { thresholdTokens: 200, encoding: "cl100k_base" },
-    });
-    await engine.bootstrap?.({
-      sessionId: "s1",
-      sessionFile: "/tmp/session.jsonl",
     });
 
     const big = "word ".repeat(2_000);
@@ -47,18 +43,14 @@ describe("createTokenizerThresholdContextEngine", () => {
       messages: [...messages],
     });
 
-    expect(assembled.estimatedTokens).toBeLessThanOrEqual(200);
-    expect(assembled.messages.at(-1)).toMatchObject({ content: "latest turn" });
+    expect(assembled.messages).toEqual([...messages]);
+    expect(assembled.estimatedTokens).toBeGreaterThan(200);
     expect(delegateCompactionToRuntime).not.toHaveBeenCalled();
   });
 
-  it("does not compact when assemble is under the threshold", async () => {
+  it("reports tokenizer estimates for short assemble prompts", async () => {
     const engine = createTokenizerThresholdContextEngine({
       config: { thresholdTokens: 113_000, encoding: "cl100k_base" },
-    });
-    await engine.bootstrap?.({
-      sessionId: "s1",
-      sessionFile: "/tmp/session.jsonl",
     });
 
     const assembled = await engine.assemble({
