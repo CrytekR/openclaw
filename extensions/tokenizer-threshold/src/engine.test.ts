@@ -26,7 +26,7 @@ describe("createTokenizerThresholdContextEngine", () => {
     });
   });
 
-  it("returns tokenizer estimates and windows over-threshold prompts", async () => {
+  it("windows over-threshold prompts in assemble without compacting", async () => {
     const engine = createTokenizerThresholdContextEngine({
       config: { thresholdTokens: 200, encoding: "cl100k_base" },
     });
@@ -49,15 +49,10 @@ describe("createTokenizerThresholdContextEngine", () => {
 
     expect(assembled.estimatedTokens).toBeLessThanOrEqual(200);
     expect(assembled.messages.at(-1)).toMatchObject({ content: "latest turn" });
-    expect(delegateCompactionToRuntime).toHaveBeenCalled();
-    expect(delegateCompactionToRuntime.mock.calls[0]?.[0]).toMatchObject({
-      sessionId: "s1",
-      sessionFile: "/tmp/session.jsonl",
-      force: true,
-    });
+    expect(delegateCompactionToRuntime).not.toHaveBeenCalled();
   });
 
-  it("does not compact when under the threshold", async () => {
+  it("does not compact when assemble is under the threshold", async () => {
     const engine = createTokenizerThresholdContextEngine({
       config: { thresholdTokens: 113_000, encoding: "cl100k_base" },
     });
@@ -76,7 +71,7 @@ describe("createTokenizerThresholdContextEngine", () => {
     expect(delegateCompactionToRuntime).not.toHaveBeenCalled();
   });
 
-  it("uses afterTurn only to refresh session bindings", async () => {
+  it("compacts from afterTurn when over the tokenizer threshold", async () => {
     const engine = createTokenizerThresholdContextEngine({
       config: { thresholdTokens: 200, encoding: "cl100k_base" },
     });
@@ -85,19 +80,61 @@ describe("createTokenizerThresholdContextEngine", () => {
       { role: "assistant", content: "word ".repeat(2_000) },
       { role: "user", content: "latest" },
     ] as const;
+
     await engine.afterTurn?.({
       sessionId: "s1",
+      sessionKey: "agent:main:main",
       sessionFile: "/tmp/session.jsonl",
       messages: [...messages],
       prePromptMessageCount: 0,
+      tokenBudget: 128_000,
+      runtimeContext: { workspaceDir: "/tmp/workspace" },
     });
-    expect(delegateCompactionToRuntime).not.toHaveBeenCalled();
 
-    const assembled = await engine.assemble({
-      sessionId: "s1",
-      messages: [...messages],
-    });
-    expect(assembled.estimatedTokens).toBeLessThanOrEqual(200);
     expect(delegateCompactionToRuntime).toHaveBeenCalledTimes(1);
+    expect(delegateCompactionToRuntime.mock.calls[0]?.[0]).toMatchObject({
+      sessionId: "s1",
+      sessionKey: "agent:main:main",
+      sessionFile: "/tmp/session.jsonl",
+      force: true,
+      tokenBudget: 128_000,
+      runtimeContext: { workspaceDir: "/tmp/workspace" },
+    });
+    expect(delegateCompactionToRuntime.mock.calls[0]?.[0].currentTokenCount).toBeGreaterThan(200);
+  });
+
+  it("does not compact from afterTurn when under the threshold", async () => {
+    const engine = createTokenizerThresholdContextEngine({
+      config: { thresholdTokens: 113_000, encoding: "cl100k_base" },
+    });
+
+    await engine.afterTurn?.({
+      sessionId: "s1",
+      sessionFile: "/tmp/session.jsonl",
+      messages: [{ role: "user", content: "short" }],
+      prePromptMessageCount: 0,
+    });
+
+    expect(delegateCompactionToRuntime).not.toHaveBeenCalled();
+  });
+
+  it("prefers runtimeContext.currentTokenCount for afterTurn compaction", async () => {
+    const engine = createTokenizerThresholdContextEngine({
+      config: { thresholdTokens: 200, encoding: "cl100k_base" },
+    });
+
+    await engine.afterTurn?.({
+      sessionId: "s1",
+      sessionFile: "/tmp/session.jsonl",
+      messages: [{ role: "user", content: "short" }],
+      prePromptMessageCount: 0,
+      runtimeContext: { currentTokenCount: 250 },
+    });
+
+    expect(delegateCompactionToRuntime).toHaveBeenCalledTimes(1);
+    expect(delegateCompactionToRuntime.mock.calls[0]?.[0]).toMatchObject({
+      currentTokenCount: 250,
+      force: true,
+    });
   });
 });

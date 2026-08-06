@@ -1,10 +1,15 @@
 /**
  * Context engine that decides compaction from a local tokenizer threshold.
+ *
+ * Path: assemble only windows the in-flight prompt; afterTurn triggers durable
+ * compaction when over threshold. Same-turn host retry (overflow recovery)
+ * still calls compact() and reloads the session before the next assemble.
  */
 import type { AgentMessage } from "openclaw/plugin-sdk/agent-harness-runtime";
 import {
   buildMemorySystemPromptAddition,
   delegateCompactionToRuntime,
+  type ContextEngineSessionTarget,
 } from "openclaw/plugin-sdk/core";
 import type { TokenizerThresholdConfig } from "./config.js";
 import { countMessageTokens, getLocalTokenCounter, type TokenCounter } from "./tokenizer.js";
@@ -31,8 +36,8 @@ function keepRecentMessagesUnderThreshold(params: {
   }
 
   // Keep the newest suffix that still fits under the tokenizer threshold so
-  // the in-flight model call is protected even before transcript compaction
-  // rewrites land in the next assemble.
+  // this attempt stays under the local gate while afterTurn / host overflow
+  // owns durable transcript compaction for the next assemble.
   let low = 1;
   let high = params.messages.length;
   let bestStart = params.messages.length - 1;
@@ -59,6 +64,18 @@ function keepRecentMessagesUnderThreshold(params: {
   };
 }
 
+function resolveCurrentTokenCount(params: {
+  messages: AgentMessage[];
+  counter: TokenCounter;
+  runtimeContext?: Record<string, unknown>;
+}): number {
+  const fromRuntime = params.runtimeContext?.currentTokenCount;
+  if (typeof fromRuntime === "number" && Number.isFinite(fromRuntime) && fromRuntime > 0) {
+    return Math.floor(fromRuntime);
+  }
+  return countMessageTokens({ messages: params.messages, counter: params.counter });
+}
+
 export function createTokenizerThresholdContextEngine(params: {
   config: TokenizerThresholdConfig;
 }) {
@@ -79,6 +96,7 @@ export function createTokenizerThresholdContextEngine(params: {
     sessionId: string;
     sessionKey?: string;
     sessionFile: string;
+    sessionTarget?: ContextEngineSessionTarget;
     tokenBudget?: number;
     currentTokenCount: number;
     runtimeContext?: Record<string, unknown>;
@@ -90,6 +108,7 @@ export function createTokenizerThresholdContextEngine(params: {
       sessionId: compactParams.sessionId,
       sessionKey: compactParams.sessionKey,
       sessionFile: compactParams.sessionFile,
+      sessionTarget: compactParams.sessionTarget,
       tokenBudget: compactParams.tokenBudget,
       currentTokenCount: compactParams.currentTokenCount,
       force: true,
@@ -123,13 +142,33 @@ export function createTokenizerThresholdContextEngine(params: {
     async afterTurn(afterTurnParams: {
       sessionId: string;
       sessionKey?: string;
+      sessionTarget?: ContextEngineSessionTarget;
       sessionFile: string;
+      messages: AgentMessage[];
+      prePromptMessageCount: number;
+      tokenBudget?: number;
+      runtimeContext?: Record<string, unknown>;
     }) {
-      // Keep session bindings fresh for the next assemble(); compaction is
-      // decided in assemble() so it runs immediately before the model call.
+      // Proactive durable compaction belongs here so the host can reload the
+      // successor transcript before the next assemble(); same-turn recovery
+      // still goes through host overflow -> compact() -> retry.
       rememberBinding(afterTurnParams.sessionId, {
         sessionFile: afterTurnParams.sessionFile,
         sessionKey: afterTurnParams.sessionKey,
+      });
+      const currentTokenCount = resolveCurrentTokenCount({
+        messages: afterTurnParams.messages,
+        counter,
+        runtimeContext: afterTurnParams.runtimeContext,
+      });
+      await compactIfOverThreshold({
+        sessionId: afterTurnParams.sessionId,
+        sessionKey: afterTurnParams.sessionKey,
+        sessionFile: afterTurnParams.sessionFile,
+        sessionTarget: afterTurnParams.sessionTarget,
+        tokenBudget: afterTurnParams.tokenBudget,
+        currentTokenCount,
+        runtimeContext: afterTurnParams.runtimeContext,
       });
     },
 
@@ -143,24 +182,9 @@ export function createTokenizerThresholdContextEngine(params: {
       model?: string;
       prompt?: string;
     }) {
-      const fullCount = countMessageTokens({
-        messages: assembleParams.messages,
-        counter,
-      });
-      const binding = bindings.get(assembleParams.sessionId);
-      const sessionFile = binding?.sessionFile;
-      // Before each model call: if the local tokenizer says we crossed the
-      // configured threshold, trigger durable compaction, then still return a
-      // windowed prompt view for this attempt.
-      if (sessionFile) {
-        await compactIfOverThreshold({
-          sessionId: assembleParams.sessionId,
-          sessionKey: assembleParams.sessionKey ?? binding?.sessionKey,
-          sessionFile,
-          tokenBudget: assembleParams.tokenBudget,
-          currentTokenCount: fullCount,
-        });
-      }
+      // Admission only: window the in-flight prompt. Do not compact here —
+      // CompactResult has no messages, and host adopt/retry owns post-compact
+      // session reload before the next assemble.
       const windowed = keepRecentMessagesUnderThreshold({
         messages: assembleParams.messages,
         thresholdTokens: params.config.thresholdTokens,
@@ -182,6 +206,7 @@ export function createTokenizerThresholdContextEngine(params: {
       sessionId: string;
       sessionKey?: string;
       sessionFile: string;
+      sessionTarget?: ContextEngineSessionTarget;
       tokenBudget?: number;
       force?: boolean;
       currentTokenCount?: number;
