@@ -18,12 +18,11 @@ type CompactResult = Awaited<ReturnType<typeof delegateCompactionToRuntime>>;
 function resolveCurrentTokenCount(params: {
   messages: AgentMessage[];
   counter: TokenCounter;
-  runtimeContext?: Record<string, unknown>;
 }): number {
-  const fromRuntime = params.runtimeContext?.currentTokenCount;
-  if (typeof fromRuntime === "number" && Number.isFinite(fromRuntime) && fromRuntime > 0) {
-    return Math.floor(fromRuntime);
-  }
+  // Gate on the local tokenizer view of session messages. Host usage snapshots
+  // (runtimeContext.currentTokenCount) can lag, jump after a large tool turn,
+  // or disagree with tiktoken — preferring them delayed compaction far past
+  // the configured threshold.
   return countMessageTokens({ messages: params.messages, counter: params.counter });
 }
 
@@ -115,7 +114,6 @@ export function createTokenizerThresholdContextEngine(params: {
       const currentTokenCount = resolveCurrentTokenCount({
         messages: afterTurnParams.messages,
         counter,
-        runtimeContext: afterTurnParams.runtimeContext,
       });
       await compactIfOverThreshold({
         sessionId: afterTurnParams.sessionId,

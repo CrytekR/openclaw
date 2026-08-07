@@ -122,11 +122,12 @@ describe("createTokenizerThresholdContextEngine", () => {
     expect(delegateCompactionToRuntime).not.toHaveBeenCalled();
   });
 
-  it("prefers runtimeContext.currentTokenCount for afterTurn compaction", async () => {
+  it("gates afterTurn compaction on local tokenizer count, not host usage", async () => {
     const engine = createTokenizerThresholdContextEngine({
       config: { thresholdTokens: 200, encoding: "cl100k_base" },
     });
 
+    // Host usage is already over threshold, but the local message view is small.
     await engine.afterTurn?.({
       sessionId: "s1",
       sessionFile: "/tmp/session.jsonl",
@@ -134,21 +135,32 @@ describe("createTokenizerThresholdContextEngine", () => {
       prePromptMessageCount: 0,
       runtimeContext: { currentTokenCount: 250 },
     });
+    expect(delegateCompactionToRuntime).not.toHaveBeenCalled();
 
-    expect(delegateCompactionToRuntime).toHaveBeenCalledTimes(1);
-    expect(delegateCompactionToRuntime.mock.calls[0]?.[0]).toMatchObject({
-      currentTokenCount: 250,
-      force: true,
+    // Local messages are over threshold even if host usage is still under.
+    await engine.afterTurn?.({
+      sessionId: "s1",
       sessionFile: "/tmp/session.jsonl",
-      runtimeContext: {
-        currentTokenCount: 250,
-        checkpointTrigger: {
-          path: "context_engine",
-          trigger: "threshold",
-          projectedTokens: 250,
-          thresholdTokens: 200,
-        },
+      messages: [
+        { role: "user", content: "word ".repeat(2_000) },
+        { role: "assistant", content: "word ".repeat(2_000) },
+      ],
+      prePromptMessageCount: 0,
+      runtimeContext: { currentTokenCount: 50 },
+    });
+    expect(delegateCompactionToRuntime).toHaveBeenCalledTimes(1);
+    const compactArgs = delegateCompactionToRuntime.mock.calls[0]?.[0];
+    expect(compactArgs.currentTokenCount).toBeGreaterThan(200);
+    expect(compactArgs.runtimeContext).toMatchObject({
+      currentTokenCount: 50,
+      checkpointTrigger: {
+        path: "context_engine",
+        trigger: "threshold",
+        thresholdTokens: 200,
       },
     });
+    expect(compactArgs.runtimeContext.checkpointTrigger.projectedTokens).toBe(
+      compactArgs.currentTokenCount,
+    );
   });
 });

@@ -13,6 +13,8 @@ When this engine triggers compaction, the checkpoint reason is labeled **Context
 
 `Context engine projectedTokens=120500 thresholdTokens=113000`
 
+The gate always uses the local tiktoken count of session messages (not the last model `usage` snapshot). Compaction still runs in `afterTurn`, so a single long tool-loop turn can overshoot the threshold until that turn/iteration finishes.
+
 ## Enable
 
 ```json5
