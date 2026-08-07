@@ -3,17 +3,19 @@
 Bundled OpenClaw context engine for the `v2026.6.6` line that:
 
 1. Loads a local tiktoken encoding via `js-tiktoken` (default `cl100k_base`)
-2. Passes `assemble` messages through unchanged (reports a local tokenizer estimate only)
-3. Triggers durable compaction in `afterTurn` when the local count reaches the threshold (default **113000**)
+2. Returns a trailing prompt window from `assemble` when the local count is at/over the threshold
+3. Triggers durable compaction in `afterTurn` when the local count reaches the threshold **and** the session write lock is free
 4. Delegates summarization to OpenClaw runtime via `delegateCompactionToRuntime`
 
-Same-turn recovery still uses the host overflow path: `compact()` → adopt successor transcript → retry → next `assemble` sees the compacted messages.
+During a live tool loop the attempt already holds the session write lock, so durable `afterTurn` compaction cannot safely open another session writer. The ownsCompaction loop hook still calls `assemble` after each new tool result; that prompt window is what keeps mid-loop model calls under the threshold. Durable compaction with a **Context engine** checkpoint runs when the lock is free (for example after an abort releases it, or outside the live attempt).
 
-When this engine triggers compaction, the checkpoint reason is labeled **Context engine** and includes the local tokenizer count plus the configured threshold, for example:
+Same-turn overflow recovery still uses the host path: `compact()` → adopt successor transcript → retry → next `assemble` sees the compacted messages.
+
+When this engine triggers durable compaction, the checkpoint reason is labeled **Context engine** and includes the local tokenizer count plus the configured threshold, for example:
 
 `Context engine projectedTokens=120500 thresholdTokens=113000`
 
-The gate always uses the local tiktoken count of session messages (not the last model `usage` snapshot). Compaction still runs in `afterTurn`, so a single long tool-loop turn can overshoot the threshold until that turn/iteration finishes.
+The gate always uses the local tiktoken count of session messages (not the last model `usage` snapshot).
 
 ## Enable
 
@@ -41,6 +43,5 @@ Restart the gateway after changing the slot.
 ## Notes
 
 - `ownsCompaction: true` disables OpenClaw runtime in-attempt auto-compaction for the run; this engine owns the threshold decision and delegates the summarization algorithm to `delegateCompactionToRuntime`.
-- `assemble` does not compact or window; it returns the host-provided messages as-is.
-- Proactive durable compaction runs in `afterTurn`, so the next turn's `assemble` receives host-reloaded post-compaction messages.
+- Mid-loop pressure is handled by `assemble` windowing under the live session lock; durable compaction is skipped (fail-fast) while that lock is held so the tool loop does not stall on lock acquire.
 - Native char/tool-result guards can still fire if the prompt remains oversized; keep the threshold below the active model window with headroom.

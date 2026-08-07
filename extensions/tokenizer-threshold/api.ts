@@ -11,3 +11,4 @@ export {
   createTokenizerThresholdContextEngine,
 } from "./src/engine.js";
 export { countMessageTokens, extractMessageText, type TokenCounter } from "./src/tokenizer.js";
+export { windowMessagesToTokenBudget } from "./src/window.js";

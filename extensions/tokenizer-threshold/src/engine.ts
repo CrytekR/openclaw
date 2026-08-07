@@ -1,17 +1,21 @@
 /**
  * Context engine that decides compaction from a local tokenizer threshold.
  *
- * assemble passes host messages through unchanged. afterTurn triggers durable
- * compaction when over threshold. Same-turn host retry (overflow recovery)
- * still calls compact() and reloads the session before the next assemble.
+ * assemble returns a trailing prompt window when over threshold so mid-loop
+ * model calls shrink even while the live attempt holds the session write lock.
+ * afterTurn performs durable runtime compaction only when that lock is free
+ * (for example after abort releases it); otherwise it fails fast and leaves
+ * prompt pressure to assemble windowing.
  */
 import type { AgentMessage } from "openclaw/plugin-sdk/agent-harness-runtime";
+import { acquireSessionWriteLock } from "openclaw/plugin-sdk/agent-harness-runtime";
 import {
   buildMemorySystemPromptAddition,
   delegateCompactionToRuntime,
 } from "openclaw/plugin-sdk/core";
 import type { TokenizerThresholdConfig } from "./config.js";
 import { countMessageTokens, getLocalTokenCounter, type TokenCounter } from "./tokenizer.js";
+import { windowMessagesToTokenBudget } from "./window.js";
 
 type CompactResult = Awaited<ReturnType<typeof delegateCompactionToRuntime>>;
 
@@ -24,6 +28,25 @@ function resolveCurrentTokenCount(params: {
   // or disagree with tiktoken — preferring them delayed compaction far past
   // the configured threshold.
   return countMessageTokens({ messages: params.messages, counter: params.counter });
+}
+
+/**
+ * Durable compact opens its own SessionManager and session write lock. During a
+ * live attempt that lock is already held, so a normal acquire waits up to the
+ * default timeout and stalls the tool loop. Probe with a 1ms timeout instead.
+ */
+async function canAcquireSessionWriteLock(sessionFile: string): Promise<boolean> {
+  try {
+    const lock = await acquireSessionWriteLock({
+      sessionFile,
+      timeoutMs: 1,
+      allowReentrant: false,
+    });
+    await lock.release();
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /** Build the checkpoint trigger snapshot for plugin-owned threshold compaction. */
@@ -60,6 +83,12 @@ export function createTokenizerThresholdContextEngine(params: {
     runtimeContext?: Record<string, unknown>;
   }) => {
     if (compactParams.currentTokenCount < params.config.thresholdTokens) {
+      return null;
+    }
+    // Skip durable compact while the live attempt still owns the session lock.
+    // The loop-hook assemble path windows the prompt instead so the tool loop
+    // keeps moving; abort/unlocked afterTurn still persists a real checkpoint.
+    if (!(await canAcquireSessionWriteLock(compactParams.sessionFile))) {
       return null;
     }
     // Attach path+calc facts so checkpoint reason shows "Context engine" with
@@ -108,9 +137,8 @@ export function createTokenizerThresholdContextEngine(params: {
       tokenBudget?: number;
       runtimeContext?: Record<string, unknown>;
     }) {
-      // Proactive durable compaction belongs here so the host can reload the
-      // successor transcript before the next assemble(); same-turn recovery
-      // still goes through host overflow -> compact() -> retry.
+      // Durable compaction runs only when the session write lock is free. Mid
+      // tool-loop pressure is handled by assemble windowing below.
       const currentTokenCount = resolveCurrentTokenCount({
         messages: afterTurnParams.messages,
         counter,
@@ -135,14 +163,17 @@ export function createTokenizerThresholdContextEngine(params: {
       model?: string;
       prompt?: string;
     }) {
-      // Pass-through: host owns session reload after compact/retry. This
-      // engine only reports a local tokenizer estimate for the prompt view.
-      return {
+      // Mid-loop ownsCompaction hook: afterTurn may not be able to durable
+      // compact under the live session lock, so return a trailing window that
+      // fits under the threshold for the next provider call.
+      const windowed = windowMessagesToTokenBudget({
         messages: assembleParams.messages,
-        estimatedTokens: countMessageTokens({
-          messages: assembleParams.messages,
-          counter,
-        }),
+        thresholdTokens: params.config.thresholdTokens,
+        counter,
+      });
+      return {
+        messages: windowed.messages,
+        estimatedTokens: windowed.estimatedTokens,
         systemPromptAddition: buildMemorySystemPromptAddition({
           availableTools: assembleParams.availableTools ?? new Set(),
           citationsMode: assembleParams.citationsMode,

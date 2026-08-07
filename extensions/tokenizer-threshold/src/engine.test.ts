@@ -1,4 +1,8 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { acquireSessionWriteLock } from "openclaw/plugin-sdk/agent-harness-runtime";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const { delegateCompactionToRuntime } = vi.hoisted(() => ({
   delegateCompactionToRuntime: vi.fn(),
@@ -17,6 +21,9 @@ vi.mock("openclaw/plugin-sdk/core", async () => {
 import { createTokenizerThresholdContextEngine } from "./engine.js";
 
 describe("createTokenizerThresholdContextEngine", () => {
+  let tempDir: string | undefined;
+  let heldLock: { release: () => Promise<void> } | undefined;
+
   beforeEach(() => {
     delegateCompactionToRuntime.mockReset();
     delegateCompactionToRuntime.mockResolvedValue({
@@ -26,7 +33,25 @@ describe("createTokenizerThresholdContextEngine", () => {
     });
   });
 
-  it("passes assemble messages through without compacting or windowing", async () => {
+  afterEach(async () => {
+    if (heldLock) {
+      await heldLock.release();
+      heldLock = undefined;
+    }
+    if (tempDir) {
+      await fs.rm(tempDir, { recursive: true, force: true }).catch(() => undefined);
+      tempDir = undefined;
+    }
+  });
+
+  async function createTempSessionFile(): Promise<string> {
+    tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "tokenizer-threshold-"));
+    const sessionFile = path.join(tempDir, "session.jsonl");
+    await fs.writeFile(sessionFile, "", "utf8");
+    return sessionFile;
+  }
+
+  it("windows assemble messages when over the tokenizer threshold", async () => {
     const engine = createTokenizerThresholdContextEngine({
       config: { thresholdTokens: 200, encoding: "cl100k_base" },
     });
@@ -43,8 +68,9 @@ describe("createTokenizerThresholdContextEngine", () => {
       messages: [...messages],
     });
 
-    expect(assembled.messages).toEqual([...messages]);
-    expect(assembled.estimatedTokens).toBeGreaterThan(200);
+    expect(assembled.messages).not.toEqual([...messages]);
+    expect(assembled.messages.at(-1)).toEqual(messages[2]);
+    expect(assembled.estimatedTokens).toBeLessThan(200);
     expect(delegateCompactionToRuntime).not.toHaveBeenCalled();
   });
 
@@ -63,10 +89,11 @@ describe("createTokenizerThresholdContextEngine", () => {
     expect(delegateCompactionToRuntime).not.toHaveBeenCalled();
   });
 
-  it("compacts from afterTurn when over the tokenizer threshold", async () => {
+  it("compacts from afterTurn when over the tokenizer threshold and lock is free", async () => {
     const engine = createTokenizerThresholdContextEngine({
       config: { thresholdTokens: 200, encoding: "cl100k_base" },
     });
+    const sessionFile = await createTempSessionFile();
     const messages = [
       { role: "user", content: "word ".repeat(2_000) },
       { role: "assistant", content: "word ".repeat(2_000) },
@@ -76,7 +103,7 @@ describe("createTokenizerThresholdContextEngine", () => {
     await engine.afterTurn?.({
       sessionId: "s1",
       sessionKey: "agent:main:main",
-      sessionFile: "/tmp/session.jsonl",
+      sessionFile,
       messages: [...messages],
       prePromptMessageCount: 0,
       tokenBudget: 128_000,
@@ -88,7 +115,7 @@ describe("createTokenizerThresholdContextEngine", () => {
     expect(compactArgs).toMatchObject({
       sessionId: "s1",
       sessionKey: "agent:main:main",
-      sessionFile: "/tmp/session.jsonl",
+      sessionFile,
       force: true,
       tokenBudget: 128_000,
     });
@@ -107,14 +134,39 @@ describe("createTokenizerThresholdContextEngine", () => {
     );
   });
 
-  it("does not compact from afterTurn when under the threshold", async () => {
+  it("skips durable afterTurn compaction while the session write lock is held", async () => {
     const engine = createTokenizerThresholdContextEngine({
-      config: { thresholdTokens: 113_000, encoding: "cl100k_base" },
+      config: { thresholdTokens: 200, encoding: "cl100k_base" },
+    });
+    const sessionFile = await createTempSessionFile();
+    heldLock = await acquireSessionWriteLock({
+      sessionFile,
+      timeoutMs: 1_000,
+      allowReentrant: false,
     });
 
     await engine.afterTurn?.({
       sessionId: "s1",
-      sessionFile: "/tmp/session.jsonl",
+      sessionFile,
+      messages: [
+        { role: "user", content: "word ".repeat(2_000) },
+        { role: "assistant", content: "word ".repeat(2_000) },
+      ],
+      prePromptMessageCount: 0,
+    });
+
+    expect(delegateCompactionToRuntime).not.toHaveBeenCalled();
+  });
+
+  it("does not compact from afterTurn when under the threshold", async () => {
+    const engine = createTokenizerThresholdContextEngine({
+      config: { thresholdTokens: 113_000, encoding: "cl100k_base" },
+    });
+    const sessionFile = await createTempSessionFile();
+
+    await engine.afterTurn?.({
+      sessionId: "s1",
+      sessionFile,
       messages: [{ role: "user", content: "short" }],
       prePromptMessageCount: 0,
     });
@@ -126,11 +178,12 @@ describe("createTokenizerThresholdContextEngine", () => {
     const engine = createTokenizerThresholdContextEngine({
       config: { thresholdTokens: 200, encoding: "cl100k_base" },
     });
+    const sessionFile = await createTempSessionFile();
 
     // Host usage is already over threshold, but the local message view is small.
     await engine.afterTurn?.({
       sessionId: "s1",
-      sessionFile: "/tmp/session.jsonl",
+      sessionFile,
       messages: [{ role: "user", content: "short" }],
       prePromptMessageCount: 0,
       runtimeContext: { currentTokenCount: 250 },
@@ -140,7 +193,7 @@ describe("createTokenizerThresholdContextEngine", () => {
     // Local messages are over threshold even if host usage is still under.
     await engine.afterTurn?.({
       sessionId: "s1",
-      sessionFile: "/tmp/session.jsonl",
+      sessionFile,
       messages: [
         { role: "user", content: "word ".repeat(2_000) },
         { role: "assistant", content: "word ".repeat(2_000) },
