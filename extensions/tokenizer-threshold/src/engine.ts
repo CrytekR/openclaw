@@ -1,24 +1,30 @@
 /**
  * Context engine that owns threshold compaction with a local tokenizer.
  *
- * Compaction logic lives in this engine (no runtime delegate / session lock):
- * - assemble returns a trailing local-tokenizer window under the threshold
- * - afterTurn refreshes the engine-owned compacted view for later host compact()
- * - compact() returns CompactResult.tokensBefore/tokensAfter so host checkpoint
- *   records and compaction hooks can persist those counts
+ * Compaction mirrors native agent-core / safeguard shape:
+ *   [user message wrapping <summary>...</summary>] + preserved recent turns
+ *
+ * - assemble() returns that compacted message list under the local threshold
+ *   (extractive summary when no LLM summary is cached yet)
+ * - afterTurn() refreshes the engine-owned view and optionally upgrades the
+ *   summary via runtimeContext.llm when available
+ * - compact() returns CompactResult.tokensBefore/tokensAfter for host checkpoints
+ *
+ * No runtime delegate / session write lock — safe inside live tool loops.
  */
 import type { AgentMessage } from "openclaw/plugin-sdk/agent-harness-runtime";
 import { buildMemorySystemPromptAddition } from "openclaw/plugin-sdk/core";
-import { computeTokenizerThresholdCompaction } from "./compact-logic.js";
+import { computeTokenizerThresholdCompaction, splitPreservedRecentTurns } from "./compact-logic.js";
 import type { TokenizerThresholdConfig } from "./config.js";
+import { summarizeWithRuntimeLlm } from "./llm-summary.js";
 import {
+  fingerprintSummarizableMessages,
   getSessionCompactionState,
   resolveSessionStateKey,
   setSessionCompactionState,
   type TokenizerThresholdSessionState,
 } from "./session-state.js";
 import { countMessageTokens, getLocalTokenCounter, type TokenCounter } from "./tokenizer.js";
-import { windowMessagesToTokenBudget } from "./window.js";
 
 type CompactResult = {
   ok: boolean;
@@ -32,6 +38,17 @@ type CompactResult = {
   };
 };
 
+type RuntimeLlm = {
+  complete: (params: {
+    messages: Array<{ role: "system" | "user" | "assistant"; content: string }>;
+    maxTokens?: number;
+    temperature?: number;
+    systemPrompt?: string;
+    purpose?: string;
+    signal?: AbortSignal;
+  }) => Promise<{ text: string }>;
+};
+
 function resolveCurrentTokenCount(params: {
   messages: AgentMessage[];
   counter: TokenCounter;
@@ -41,6 +58,15 @@ function resolveCurrentTokenCount(params: {
   // or disagree with tiktoken — preferring them delayed compaction far past
   // the configured threshold.
   return countMessageTokens({ messages: params.messages, counter: params.counter });
+}
+
+function resolveRuntimeLlm(runtimeContext?: Record<string, unknown>): RuntimeLlm | undefined {
+  const llm = runtimeContext?.llm;
+  if (!llm || typeof llm !== "object") {
+    return undefined;
+  }
+  const complete = (llm as { complete?: unknown }).complete;
+  return typeof complete === "function" ? (llm as RuntimeLlm) : undefined;
 }
 
 /** Build the checkpoint trigger snapshot for plugin-owned threshold compaction. */
@@ -79,6 +105,7 @@ function toCompactResult(params: {
         engine: "tokenizer-threshold",
         thresholdTokens: params.thresholdTokens,
         encoding: params.encoding,
+        summaryFromLlm: params.state.summaryFromLlm,
         checkpointTrigger: buildContextEngineCheckpointTrigger({
           currentTokenCount: params.state.tokensBefore,
           thresholdTokens: params.thresholdTokens,
@@ -87,6 +114,27 @@ function toCompactResult(params: {
       },
     },
   };
+}
+
+function resolveReusableSummary(params: {
+  stateKey: string;
+  messages: AgentMessage[];
+  recentTurnsPreserve: number;
+}): { summary?: string; summaryFromLlm: boolean; summarizableFingerprint: string } {
+  const split = splitPreservedRecentTurns({
+    messages: params.messages,
+    recentTurnsPreserve: params.recentTurnsPreserve,
+  });
+  const summarizableFingerprint = fingerprintSummarizableMessages(split.summarizableMessages);
+  const existing = getSessionCompactionState(params.stateKey);
+  if (existing?.summary?.trim() && existing.summarizableFingerprint === summarizableFingerprint) {
+    return {
+      summary: existing.summary,
+      summaryFromLlm: existing.summaryFromLlm,
+      summarizableFingerprint,
+    };
+  }
+  return { summaryFromLlm: false, summarizableFingerprint };
 }
 
 export function createTokenizerThresholdContextEngine(params: {
@@ -101,16 +149,26 @@ export function createTokenizerThresholdContextEngine(params: {
     messages: AgentMessage[];
     force?: boolean;
     tokenBudget?: number;
+    summaryOverride?: string;
+    summaryFromLlm?: boolean;
   }): CompactResult => {
     const stateKey = resolveSessionStateKey({
       sessionId: compactParams.sessionId,
       sessionKey: compactParams.sessionKey,
     });
+    const reusable = resolveReusableSummary({
+      stateKey,
+      messages: compactParams.messages,
+      recentTurnsPreserve: params.config.recentTurnsPreserve,
+    });
+    const summaryOverride = compactParams.summaryOverride?.trim() || reusable.summary;
     const computation = computeTokenizerThresholdCompaction({
       messages: compactParams.messages,
       thresholdTokens: params.config.thresholdTokens,
       counter,
       force: compactParams.force,
+      recentTurnsPreserve: params.config.recentTurnsPreserve,
+      summaryOverride,
     });
     if (!computation.compacted) {
       return {
@@ -120,12 +178,23 @@ export function createTokenizerThresholdContextEngine(params: {
       };
     }
 
+    const summaryFromLlm = Boolean(
+      compactParams.summaryFromLlm ||
+      (summaryOverride && reusable.summary === summaryOverride && reusable.summaryFromLlm),
+    );
     const state: TokenizerThresholdSessionState = {
       compactedSourceLength: compactParams.messages.length,
+      summarizableCount: computation.summarizableCount,
+      summarizableFingerprint:
+        reusable.summarizableFingerprint ||
+        fingerprintSummarizableMessages(
+          compactParams.messages.slice(0, computation.preservedStartIndex),
+        ),
       compactedMessages: computation.messages,
       tokensBefore: computation.tokensBefore,
       tokensAfter: computation.tokensAfter,
       summary: computation.summary,
+      summaryFromLlm,
     };
     setSessionCompactionState(stateKey, state);
     return toCompactResult({
@@ -161,7 +230,6 @@ export function createTokenizerThresholdContextEngine(params: {
       runtimeContext?: Record<string, unknown>;
     }) {
       // Engine-owned view only — no session write lock, safe in tool loops.
-      // Host compaction records are written when the host calls compact().
       const currentTokenCount = resolveCurrentTokenCount({
         messages: afterTurnParams.messages,
         counter,
@@ -169,12 +237,58 @@ export function createTokenizerThresholdContextEngine(params: {
       if (currentTokenCount < params.config.thresholdTokens) {
         return;
       }
+
+      const stateKey = resolveSessionStateKey({
+        sessionId: afterTurnParams.sessionId,
+        sessionKey: afterTurnParams.sessionKey,
+      });
+      const reusable = resolveReusableSummary({
+        stateKey,
+        messages: afterTurnParams.messages,
+        recentTurnsPreserve: params.config.recentTurnsPreserve,
+      });
+
+      // Prefer LLM summary when the host provided runtimeContext.llm and we do
+      // not already have a matching LLM-backed summary for this prefix.
+      const llm = resolveRuntimeLlm(afterTurnParams.runtimeContext);
+      if (llm && !reusable.summaryFromLlm) {
+        const split = splitPreservedRecentTurns({
+          messages: afterTurnParams.messages,
+          recentTurnsPreserve: params.config.recentTurnsPreserve,
+        });
+        if (split.summarizableMessages.length > 0) {
+          try {
+            const llmSummary = await summarizeWithRuntimeLlm({
+              messages: split.summarizableMessages,
+              llmComplete: (request) => llm.complete(request),
+              previousSummary: reusable.summary,
+            });
+            if (llmSummary?.trim()) {
+              runEngineCompaction({
+                sessionId: afterTurnParams.sessionId,
+                sessionKey: afterTurnParams.sessionKey,
+                messages: afterTurnParams.messages,
+                force: true,
+                tokenBudget: afterTurnParams.tokenBudget,
+                summaryOverride: llmSummary,
+                summaryFromLlm: true,
+              });
+              return;
+            }
+          } catch {
+            // Fall through to extractive compact — never break the tool loop.
+          }
+        }
+      }
+
       runEngineCompaction({
         sessionId: afterTurnParams.sessionId,
         sessionKey: afterTurnParams.sessionKey,
         messages: afterTurnParams.messages,
         force: true,
         tokenBudget: afterTurnParams.tokenBudget,
+        summaryOverride: reusable.summary,
+        summaryFromLlm: reusable.summaryFromLlm,
       });
     },
 
@@ -188,25 +302,49 @@ export function createTokenizerThresholdContextEngine(params: {
       model?: string;
       prompt?: string;
     }) {
-      // Prompt path: always return a local-tokenizer window under threshold so
-      // mid-loop model calls stay bounded even before/without durable host records.
-      const windowed = windowMessagesToTokenBudget({
+      // Prompt path: return native-style [summary user msg] + preserved recent
+      // turns under the local threshold so mid-loop model calls stay bounded.
+      const stateKey = resolveSessionStateKey({
+        sessionId: assembleParams.sessionId,
+        sessionKey: assembleParams.sessionKey,
+      });
+      const reusable = resolveReusableSummary({
+        stateKey,
+        messages: assembleParams.messages,
+        recentTurnsPreserve: params.config.recentTurnsPreserve,
+      });
+      const computation = computeTokenizerThresholdCompaction({
         messages: assembleParams.messages,
         thresholdTokens: params.config.thresholdTokens,
         counter,
+        force: true,
+        recentTurnsPreserve: params.config.recentTurnsPreserve,
+        summaryOverride: reusable.summary,
       });
-      if (windowed.messages.length < assembleParams.messages.length) {
-        runEngineCompaction({
-          sessionId: assembleParams.sessionId,
-          sessionKey: assembleParams.sessionKey,
-          messages: assembleParams.messages,
-          force: true,
-          tokenBudget: assembleParams.tokenBudget,
-        });
+
+      if (computation.compacted) {
+        const state: TokenizerThresholdSessionState = {
+          compactedSourceLength: assembleParams.messages.length,
+          summarizableCount: computation.summarizableCount,
+          summarizableFingerprint:
+            reusable.summarizableFingerprint ||
+            fingerprintSummarizableMessages(
+              assembleParams.messages.slice(0, computation.preservedStartIndex),
+            ),
+          compactedMessages: computation.messages,
+          tokensBefore: computation.tokensBefore,
+          tokensAfter: computation.tokensAfter,
+          summary: computation.summary,
+          summaryFromLlm: Boolean(
+            reusable.summary && reusable.summary === computation.summary && reusable.summaryFromLlm,
+          ),
+        };
+        setSessionCompactionState(stateKey, state);
       }
+
       return {
-        messages: windowed.messages,
-        estimatedTokens: windowed.estimatedTokens,
+        messages: computation.messages,
+        estimatedTokens: computation.tokensAfter,
         systemPromptAddition: buildMemorySystemPromptAddition({
           availableTools: assembleParams.availableTools ?? new Set(),
           citationsMode: assembleParams.citationsMode,
@@ -235,7 +373,7 @@ export function createTokenizerThresholdContextEngine(params: {
         : undefined;
 
       compactInFlight = Promise.resolve()
-        .then(() => {
+        .then(async () => {
           if (compactParams.abortSignal?.aborted) {
             return {
               ok: false,
@@ -243,7 +381,33 @@ export function createTokenizerThresholdContextEngine(params: {
               reason: "aborted",
             } satisfies CompactResult;
           }
+
           if (messages) {
+            const llm = resolveRuntimeLlm(compactParams.runtimeContext);
+            if (llm) {
+              const split = splitPreservedRecentTurns({
+                messages,
+                recentTurnsPreserve: params.config.recentTurnsPreserve,
+              });
+              if (split.summarizableMessages.length > 0) {
+                const llmSummary = await summarizeWithRuntimeLlm({
+                  messages: split.summarizableMessages,
+                  llmComplete: (request) => llm.complete(request),
+                  signal: compactParams.abortSignal,
+                });
+                if (llmSummary?.trim()) {
+                  return runEngineCompaction({
+                    sessionId: compactParams.sessionId,
+                    sessionKey: compactParams.sessionKey,
+                    messages,
+                    force: compactParams.force ?? true,
+                    tokenBudget: compactParams.tokenBudget,
+                    summaryOverride: llmSummary,
+                    summaryFromLlm: true,
+                  });
+                }
+              }
+            }
             return runEngineCompaction({
               sessionId: compactParams.sessionId,
               sessionKey: compactParams.sessionKey,

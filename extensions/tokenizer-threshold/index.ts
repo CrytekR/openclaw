@@ -1,6 +1,6 @@
 /**
  * Tokenizer-threshold context engine plugin.
- * Owns threshold compaction with a local tiktoken trailing-window algorithm.
+ * Owns threshold compaction with native-style summary + preserved recent turns.
  */
 import { definePluginEntry } from "openclaw/plugin-sdk/plugin-entry";
 import { Type } from "typebox";
@@ -18,6 +18,7 @@ const configSchema = Type.Object(
         Type.Literal("r50k_base"),
       ]),
     ),
+    recentTurnsPreserve: Type.Optional(Type.Integer({ minimum: 1, maximum: 12 })),
   },
   { additionalProperties: false },
 );
@@ -26,7 +27,7 @@ export default definePluginEntry({
   id: "tokenizer-threshold",
   name: "Tokenizer Threshold Context Engine",
   description:
-    "Own threshold compaction with a local tiktoken window (default 113k) and report token counts to host checkpoints.",
+    "Own threshold compaction with native-style summary + preserved recent turns (default 113k) and report token counts to host checkpoints.",
   kind: "context-engine",
   configSchema,
   register(api) {

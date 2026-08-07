@@ -1,20 +1,15 @@
 /**
- * Engine-owned compaction algorithm: keep a trailing local-tokenizer window.
- * No runtime delegate and no live session-file writer — the host prompt path
- * consumes the result through assemble()/CompactResult.
+ * Engine-owned compaction: native-style summary message + preserved recent turns.
  */
 import type { AgentMessage } from "openclaw/plugin-sdk/agent-harness-runtime";
+import {
+  assembleNativeStyleCompactedMessages,
+  splitPreservedRecentTurns,
+  type NativeCompactAssembly,
+} from "./native-compact-assemble.js";
 import { countMessageTokens, type TokenCounter } from "./tokenizer.js";
-import { windowMessagesToTokenBudget } from "./window.js";
 
-export type EngineCompactComputation = {
-  compacted: boolean;
-  reason?: string;
-  messages: AgentMessage[];
-  tokensBefore: number;
-  tokensAfter: number;
-  summary: string;
-};
+export type EngineCompactComputation = NativeCompactAssembly;
 
 /** Compute a compacted prompt view for the tokenizer-threshold engine. */
 export function computeTokenizerThresholdCompaction(params: {
@@ -22,6 +17,8 @@ export function computeTokenizerThresholdCompaction(params: {
   thresholdTokens: number;
   counter: TokenCounter;
   force?: boolean;
+  recentTurnsPreserve?: number;
+  summaryOverride?: string;
 }): EngineCompactComputation {
   const tokensBefore = countMessageTokens({
     messages: params.messages,
@@ -36,10 +33,13 @@ export function computeTokenizerThresholdCompaction(params: {
       tokensBefore,
       tokensAfter: tokensBefore,
       summary: "",
+      preservedStartIndex: 0,
+      summarizableCount: 0,
     };
   }
 
-  if (!params.force && tokensBefore < params.thresholdTokens) {
+  // force still respects the threshold gate: under-budget prompts stay intact.
+  if (tokensBefore < params.thresholdTokens) {
     return {
       compacted: false,
       reason: "below threshold",
@@ -47,35 +47,19 @@ export function computeTokenizerThresholdCompaction(params: {
       tokensBefore,
       tokensAfter: tokensBefore,
       summary: "",
+      preservedStartIndex: params.messages.length,
+      summarizableCount: 0,
     };
   }
 
-  const windowed = windowMessagesToTokenBudget({
+  return assembleNativeStyleCompactedMessages({
     messages: params.messages,
     thresholdTokens: params.thresholdTokens,
     counter: params.counter,
+    recentTurnsPreserve: params.recentTurnsPreserve,
+    summaryOverride: params.summaryOverride,
+    countMessageTokens: (messages) => countMessageTokens({ messages, counter: params.counter }),
   });
-
-  if (windowed.messages.length >= params.messages.length) {
-    return {
-      compacted: false,
-      reason: "nothing to compact",
-      messages: params.messages,
-      tokensBefore,
-      tokensAfter: tokensBefore,
-      summary: "",
-    };
-  }
-
-  const dropped = params.messages.length - windowed.messages.length;
-  return {
-    compacted: true,
-    messages: windowed.messages,
-    tokensBefore,
-    tokensAfter: windowed.estimatedTokens,
-    summary:
-      `Tokenizer-threshold kept ${windowed.messages.length} trailing message(s) ` +
-      `(dropped ${dropped}) under ${params.thresholdTokens} local tokens ` +
-      `(${tokensBefore} → ${windowed.estimatedTokens}).`,
-  };
 }
+
+export { splitPreservedRecentTurns };

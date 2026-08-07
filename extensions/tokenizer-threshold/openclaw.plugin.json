@@ -5,15 +5,19 @@
   },
   "kind": "context-engine",
   "name": "Tokenizer Threshold Context Engine",
-  "description": "Own threshold compaction with a local tiktoken window (default 113k); report tokensBefore/tokensAfter to host checkpoints.",
+  "description": "Own threshold compaction with native-style summary + preserved recent turns (default 113k); report tokensBefore/tokensAfter to host checkpoints.",
   "uiHints": {
     "thresholdTokens": {
       "label": "Compaction threshold (tokens)",
-      "help": "When local tokenizer counts reach this value, assemble/afterTurn/compact keep a trailing prompt window under the budget."
+      "help": "When local tokenizer counts reach this value, assemble returns a summary message plus preserved recent turns under the budget."
     },
     "encoding": {
       "label": "Tiktoken encoding",
       "help": "Local encoding loaded by js-tiktoken (default cl100k_base)."
+    },
+    "recentTurnsPreserve": {
+      "label": "Recent turns to preserve",
+      "help": "How many recent user/assistant turns to keep verbatim after the summary (native safeguard default: 3)."
     }
   },
   "configSchema": {
@@ -29,6 +33,12 @@
         "type": "string",
         "enum": ["cl100k_base", "o200k_base", "p50k_base", "r50k_base"],
         "default": "cl100k_base"
+      },
+      "recentTurnsPreserve": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 12,
+        "default": 3
       }
     }
   }

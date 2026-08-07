@@ -13,6 +13,7 @@ vi.mock("openclaw/plugin-sdk/core", async () => {
 });
 
 import { createTokenizerThresholdContextEngine } from "./engine.js";
+import { COMPACTION_SUMMARY_PREFIX } from "./native-compact-assemble.js";
 import { resetTokenizerThresholdSessionStatesForTest } from "./session-state.js";
 
 describe("createTokenizerThresholdContextEngine", () => {
@@ -24,9 +25,13 @@ describe("createTokenizerThresholdContextEngine", () => {
     resetTokenizerThresholdSessionStatesForTest();
   });
 
-  it("windows assemble messages when over the tokenizer threshold", async () => {
+  it("assembles native-style summary + preserved turns when over threshold", async () => {
     const engine = createTokenizerThresholdContextEngine({
-      config: { thresholdTokens: 200, encoding: "cl100k_base" },
+      config: {
+        thresholdTokens: 200,
+        encoding: "cl100k_base",
+        recentTurnsPreserve: 1,
+      },
     });
 
     const big = "word ".repeat(2_000);
@@ -44,11 +49,18 @@ describe("createTokenizerThresholdContextEngine", () => {
     expect(assembled.messages).not.toEqual([...messages]);
     expect(assembled.messages.at(-1)).toEqual(messages[2]);
     expect(assembled.estimatedTokens).toBeLessThan(200);
+    const first = assembled.messages[0] as { role?: string; content?: string };
+    expect(first.role).toBe("user");
+    expect(String(first.content)).toContain(COMPACTION_SUMMARY_PREFIX.trim());
   });
 
   it("reports tokenizer estimates for short assemble prompts", async () => {
     const engine = createTokenizerThresholdContextEngine({
-      config: { thresholdTokens: 113_000, encoding: "cl100k_base" },
+      config: {
+        thresholdTokens: 113_000,
+        encoding: "cl100k_base",
+        recentTurnsPreserve: 3,
+      },
     });
 
     const assembled = await engine.assemble({
@@ -62,7 +74,11 @@ describe("createTokenizerThresholdContextEngine", () => {
 
   it("compacts inside the engine from afterTurn when over the tokenizer threshold", async () => {
     const engine = createTokenizerThresholdContextEngine({
-      config: { thresholdTokens: 200, encoding: "cl100k_base" },
+      config: {
+        thresholdTokens: 200,
+        encoding: "cl100k_base",
+        recentTurnsPreserve: 1,
+      },
     });
     const messages = [
       { role: "user", content: "word ".repeat(2_000) },
@@ -112,7 +128,11 @@ describe("createTokenizerThresholdContextEngine", () => {
 
   it("does not compact from afterTurn when under the threshold", async () => {
     const engine = createTokenizerThresholdContextEngine({
-      config: { thresholdTokens: 113_000, encoding: "cl100k_base" },
+      config: {
+        thresholdTokens: 113_000,
+        encoding: "cl100k_base",
+        recentTurnsPreserve: 3,
+      },
     });
 
     await engine.afterTurn?.({
@@ -136,7 +156,11 @@ describe("createTokenizerThresholdContextEngine", () => {
 
   it("gates afterTurn compaction on local tokenizer count, not host usage", async () => {
     const engine = createTokenizerThresholdContextEngine({
-      config: { thresholdTokens: 200, encoding: "cl100k_base" },
+      config: {
+        thresholdTokens: 200,
+        encoding: "cl100k_base",
+        recentTurnsPreserve: 1,
+      },
     });
 
     await engine.afterTurn?.({
@@ -186,7 +210,11 @@ describe("createTokenizerThresholdContextEngine", () => {
 
   it("compacts from explicit runtimeContext messages without delegating", async () => {
     const engine = createTokenizerThresholdContextEngine({
-      config: { thresholdTokens: 200, encoding: "cl100k_base" },
+      config: {
+        thresholdTokens: 200,
+        encoding: "cl100k_base",
+        recentTurnsPreserve: 1,
+      },
     });
     const messages = [
       { role: "user", content: "word ".repeat(2_000) },
@@ -206,5 +234,48 @@ describe("createTokenizerThresholdContextEngine", () => {
     expect(compactResult.result?.tokensAfter).toBeLessThan(
       compactResult.result?.tokensBefore ?? Number.POSITIVE_INFINITY,
     );
+  });
+
+  it("upgrades extractive summary via runtimeContext.llm in afterTurn", async () => {
+    const engine = createTokenizerThresholdContextEngine({
+      config: {
+        thresholdTokens: 200,
+        encoding: "cl100k_base",
+        recentTurnsPreserve: 1,
+      },
+    });
+    const messages = [
+      { role: "user", content: "word ".repeat(2_000) },
+      { role: "assistant", content: "word ".repeat(2_000) },
+      { role: "user", content: "latest" },
+    ];
+
+    await engine.afterTurn?.({
+      sessionId: "s1",
+      sessionFile: "/tmp/session.jsonl",
+      messages,
+      prePromptMessageCount: 0,
+      runtimeContext: {
+        llm: {
+          complete: async () => ({ text: "LLM distilled earlier context" }),
+        },
+      },
+    });
+
+    const assembled = await engine.assemble({
+      sessionId: "s1",
+      messages,
+    });
+    expect(String((assembled.messages[0] as { content?: string }).content)).toContain(
+      "LLM distilled earlier context",
+    );
+
+    const compactResult = await engine.compact({
+      sessionId: "s1",
+      sessionFile: "/tmp/session.jsonl",
+      force: true,
+    });
+    expect(compactResult.result?.summary).toBe("LLM distilled earlier context");
+    expect(compactResult.result?.details).toMatchObject({ summaryFromLlm: true });
   });
 });
