@@ -84,15 +84,27 @@ describe("createTokenizerThresholdContextEngine", () => {
     });
 
     expect(delegateCompactionToRuntime).toHaveBeenCalledTimes(1);
-    expect(delegateCompactionToRuntime.mock.calls[0]?.[0]).toMatchObject({
+    const compactArgs = delegateCompactionToRuntime.mock.calls[0]?.[0];
+    expect(compactArgs).toMatchObject({
       sessionId: "s1",
       sessionKey: "agent:main:main",
       sessionFile: "/tmp/session.jsonl",
       force: true,
       tokenBudget: 128_000,
-      runtimeContext: { workspaceDir: "/tmp/workspace" },
     });
-    expect(delegateCompactionToRuntime.mock.calls[0]?.[0].currentTokenCount).toBeGreaterThan(200);
+    expect(compactArgs.currentTokenCount).toBeGreaterThan(200);
+    expect(compactArgs.runtimeContext).toMatchObject({
+      workspaceDir: "/tmp/workspace",
+      checkpointTrigger: {
+        path: "context_engine",
+        trigger: "threshold",
+        thresholdTokens: 200,
+        contextWindowTokens: 128_000,
+      },
+    });
+    expect(compactArgs.runtimeContext.checkpointTrigger.projectedTokens).toBe(
+      compactArgs.currentTokenCount,
+    );
   });
 
   it("does not compact from afterTurn when under the threshold", async () => {
@@ -128,6 +140,15 @@ describe("createTokenizerThresholdContextEngine", () => {
       currentTokenCount: 250,
       force: true,
       sessionFile: "/tmp/session.jsonl",
+      runtimeContext: {
+        currentTokenCount: 250,
+        checkpointTrigger: {
+          path: "context_engine",
+          trigger: "threshold",
+          projectedTokens: 250,
+          thresholdTokens: 200,
+        },
+      },
     });
   });
 });

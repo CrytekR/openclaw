@@ -6,5 +6,8 @@ export {
   type TokenizerThresholdConfig,
   type TokenizerThresholdEncoding,
 } from "./src/config.js";
-export { createTokenizerThresholdContextEngine } from "./src/engine.js";
+export {
+  buildContextEngineCheckpointTrigger,
+  createTokenizerThresholdContextEngine,
+} from "./src/engine.js";
 export { countMessageTokens, extractMessageText, type TokenCounter } from "./src/tokenizer.js";

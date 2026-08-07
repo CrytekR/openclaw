@@ -9,6 +9,10 @@ Bundled OpenClaw context engine for the `v2026.6.6` line that:
 
 Same-turn recovery still uses the host overflow path: `compact()` → adopt successor transcript → retry → next `assemble` sees the compacted messages.
 
+When this engine triggers compaction, the checkpoint reason is labeled **Context engine** and includes the local tokenizer count plus the configured threshold, for example:
+
+`Context engine projectedTokens=120500 thresholdTokens=113000`
+
 ## Enable
 
 ```json5

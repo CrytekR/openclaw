@@ -362,6 +362,7 @@ function formatCheckpointReason(reason: SessionCompactionCheckpoint["reason"]): 
     case "timeout-retry":
       return t("sessionsView.timeoutRetry");
     default:
+      // Freeform reasons (for example "Context engine projectedTokens=...") display as-is.
       return reason;
   }
 }

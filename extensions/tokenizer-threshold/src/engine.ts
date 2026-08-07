@@ -27,6 +27,25 @@ function resolveCurrentTokenCount(params: {
   return countMessageTokens({ messages: params.messages, counter: params.counter });
 }
 
+/** Build the checkpoint trigger snapshot for plugin-owned threshold compaction. */
+export function buildContextEngineCheckpointTrigger(params: {
+  currentTokenCount: number;
+  thresholdTokens: number;
+  tokenBudget?: number;
+}) {
+  return {
+    path: "context_engine" as const,
+    trigger: "threshold" as const,
+    projectedTokens: Math.floor(params.currentTokenCount),
+    thresholdTokens: Math.floor(params.thresholdTokens),
+    ...(typeof params.tokenBudget === "number" &&
+    Number.isFinite(params.tokenBudget) &&
+    params.tokenBudget > 0
+      ? { contextWindowTokens: Math.floor(params.tokenBudget) }
+      : {}),
+  };
+}
+
 export function createTokenizerThresholdContextEngine(params: {
   config: TokenizerThresholdConfig;
 }) {
@@ -44,6 +63,14 @@ export function createTokenizerThresholdContextEngine(params: {
     if (compactParams.currentTokenCount < params.config.thresholdTokens) {
       return null;
     }
+    // Attach path+calc facts so checkpoint reason shows "Context engine" with
+    // the local tokenizer count and configured threshold, not the generic
+    // Auto threshold fallback.
+    const checkpointTrigger = buildContextEngineCheckpointTrigger({
+      currentTokenCount: compactParams.currentTokenCount,
+      thresholdTokens: params.config.thresholdTokens,
+      tokenBudget: compactParams.tokenBudget,
+    });
     return engine.compact({
       sessionId: compactParams.sessionId,
       sessionKey: compactParams.sessionKey,
@@ -51,7 +78,10 @@ export function createTokenizerThresholdContextEngine(params: {
       tokenBudget: compactParams.tokenBudget,
       currentTokenCount: compactParams.currentTokenCount,
       force: true,
-      runtimeContext: compactParams.runtimeContext,
+      runtimeContext: {
+        ...compactParams.runtimeContext,
+        checkpointTrigger,
+      },
     });
   };
 
