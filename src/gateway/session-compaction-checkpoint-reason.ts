@@ -17,6 +17,7 @@ const CHECKPOINT_REASON_PATH_LABELS = {
   overflow_retry: "Overflow retry",
   timeout_retry: "Timeout retry",
   auto_threshold: "Auto threshold",
+  context_engine: "Context engine",
   manual: "Manual",
 } as const satisfies Record<SessionCompactionCheckpointTriggerPath, string>;
 
@@ -152,6 +153,17 @@ function appendManualOrAutoGateCalc(
   pushFiniteIntField(parts, "thresholdTokens", trigger.thresholdTokens);
 }
 
+function appendContextEngineGateCalc(
+  parts: string[],
+  trigger: SessionCompactionCheckpointTrigger,
+): void {
+  // Lead with the engine-local count and configured threshold so operators can
+  // compare against plugins.entries.<engine>.config.thresholdTokens directly.
+  pushFiniteIntField(parts, "projectedTokens", trigger.projectedTokens);
+  pushFiniteIntField(parts, "thresholdTokens", trigger.thresholdTokens);
+  pushFiniteIntField(parts, "contextWindowTokens", trigger.contextWindowTokens);
+}
+
 /** Append path-specific gate evaluation numbers onto the reason string. */
 export function appendCompactionCheckpointReasonGateCalc(
   parts: string[],
@@ -184,6 +196,9 @@ export function appendCompactionCheckpointReasonGateCalc(
     case "manual":
     case "auto_threshold":
       appendManualOrAutoGateCalc(parts, trigger);
+      return;
+    case "context_engine":
+      appendContextEngineGateCalc(parts, trigger);
       return;
   }
 }
