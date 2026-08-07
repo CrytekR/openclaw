@@ -1,0 +1,35 @@
+{
+  "id": "tokenizer-threshold",
+  "activation": {
+    "onStartup": true
+  },
+  "kind": "context-engine",
+  "name": "Tokenizer Threshold Context Engine",
+  "description": "Count prompt tokens with a local tiktoken encoding and trigger compaction at a fixed threshold (default 113k).",
+  "uiHints": {
+    "thresholdTokens": {
+      "label": "Compaction threshold (tokens)",
+      "help": "When local tokenizer counts reach this value after a turn, the engine triggers compaction."
+    },
+    "encoding": {
+      "label": "Tiktoken encoding",
+      "help": "Local encoding loaded by js-tiktoken (default cl100k_base)."
+    }
+  },
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "thresholdTokens": {
+        "type": "integer",
+        "minimum": 1,
+        "default": 113000
+      },
+      "encoding": {
+        "type": "string",
+        "enum": ["cl100k_base", "o200k_base", "p50k_base", "r50k_base"],
+        "default": "cl100k_base"
+      }
+    }
+  }
+}
