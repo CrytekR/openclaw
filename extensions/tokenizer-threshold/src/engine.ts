@@ -1,23 +1,36 @@
 /**
- * Context engine that decides compaction from a local tokenizer threshold.
+ * Context engine that owns threshold compaction with a local tokenizer.
  *
- * assemble returns a trailing prompt window when over threshold so mid-loop
- * model calls shrink even while the live attempt holds the session write lock.
- * afterTurn performs durable runtime compaction only when that lock is free
- * (for example after abort releases it); otherwise it fails fast and leaves
- * prompt pressure to assemble windowing.
+ * Compaction logic lives in this engine (no runtime delegate / session lock):
+ * - assemble returns a trailing local-tokenizer window under the threshold
+ * - afterTurn refreshes the engine-owned compacted view for later host compact()
+ * - compact() returns CompactResult.tokensBefore/tokensAfter so host checkpoint
+ *   records and compaction hooks can persist those counts
  */
 import type { AgentMessage } from "openclaw/plugin-sdk/agent-harness-runtime";
-import { acquireSessionWriteLock } from "openclaw/plugin-sdk/agent-harness-runtime";
-import {
-  buildMemorySystemPromptAddition,
-  delegateCompactionToRuntime,
-} from "openclaw/plugin-sdk/core";
+import { buildMemorySystemPromptAddition } from "openclaw/plugin-sdk/core";
+import { computeTokenizerThresholdCompaction } from "./compact-logic.js";
 import type { TokenizerThresholdConfig } from "./config.js";
+import {
+  getSessionCompactionState,
+  resolveSessionStateKey,
+  setSessionCompactionState,
+  type TokenizerThresholdSessionState,
+} from "./session-state.js";
 import { countMessageTokens, getLocalTokenCounter, type TokenCounter } from "./tokenizer.js";
 import { windowMessagesToTokenBudget } from "./window.js";
 
-type CompactResult = Awaited<ReturnType<typeof delegateCompactionToRuntime>>;
+type CompactResult = {
+  ok: boolean;
+  compacted: boolean;
+  reason?: string;
+  result?: {
+    summary?: string;
+    tokensBefore: number;
+    tokensAfter?: number;
+    details?: unknown;
+  };
+};
 
 function resolveCurrentTokenCount(params: {
   messages: AgentMessage[];
@@ -28,25 +41,6 @@ function resolveCurrentTokenCount(params: {
   // or disagree with tiktoken — preferring them delayed compaction far past
   // the configured threshold.
   return countMessageTokens({ messages: params.messages, counter: params.counter });
-}
-
-/**
- * Durable compact opens its own SessionManager and session write lock. During a
- * live attempt that lock is already held, so a normal acquire waits up to the
- * default timeout and stalls the tool loop. Probe with a 1ms timeout instead.
- */
-async function canAcquireSessionWriteLock(sessionFile: string): Promise<boolean> {
-  try {
-    const lock = await acquireSessionWriteLock({
-      sessionFile,
-      timeoutMs: 1,
-      allowReentrant: false,
-    });
-    await lock.release();
-    return true;
-  } catch {
-    return false;
-  }
 }
 
 /** Build the checkpoint trigger snapshot for plugin-owned threshold compaction. */
@@ -68,48 +62,77 @@ export function buildContextEngineCheckpointTrigger(params: {
   };
 }
 
+function toCompactResult(params: {
+  state: TokenizerThresholdSessionState;
+  thresholdTokens: number;
+  encoding: TokenizerThresholdConfig["encoding"];
+  tokenBudget?: number;
+}): CompactResult {
+  return {
+    ok: true,
+    compacted: true,
+    result: {
+      summary: params.state.summary,
+      tokensBefore: params.state.tokensBefore,
+      tokensAfter: params.state.tokensAfter,
+      details: {
+        engine: "tokenizer-threshold",
+        thresholdTokens: params.thresholdTokens,
+        encoding: params.encoding,
+        checkpointTrigger: buildContextEngineCheckpointTrigger({
+          currentTokenCount: params.state.tokensBefore,
+          thresholdTokens: params.thresholdTokens,
+          tokenBudget: params.tokenBudget,
+        }),
+      },
+    },
+  };
+}
+
 export function createTokenizerThresholdContextEngine(params: {
   config: TokenizerThresholdConfig;
 }) {
   const counter = getLocalTokenCounter(params.config.encoding);
   let compactInFlight: Promise<CompactResult> | null = null;
 
-  const compactIfOverThreshold = async (compactParams: {
+  const runEngineCompaction = (compactParams: {
     sessionId: string;
     sessionKey?: string;
-    sessionFile: string;
+    messages: AgentMessage[];
+    force?: boolean;
     tokenBudget?: number;
-    currentTokenCount: number;
-    runtimeContext?: Record<string, unknown>;
-  }) => {
-    if (compactParams.currentTokenCount < params.config.thresholdTokens) {
-      return null;
-    }
-    // Skip durable compact while the live attempt still owns the session lock.
-    // The loop-hook assemble path windows the prompt instead so the tool loop
-    // keeps moving; abort/unlocked afterTurn still persists a real checkpoint.
-    if (!(await canAcquireSessionWriteLock(compactParams.sessionFile))) {
-      return null;
-    }
-    // Attach path+calc facts so checkpoint reason shows "Context engine" with
-    // the local tokenizer count and configured threshold, not the generic
-    // Auto threshold fallback.
-    const checkpointTrigger = buildContextEngineCheckpointTrigger({
-      currentTokenCount: compactParams.currentTokenCount,
-      thresholdTokens: params.config.thresholdTokens,
-      tokenBudget: compactParams.tokenBudget,
-    });
-    return engine.compact({
+  }): CompactResult => {
+    const stateKey = resolveSessionStateKey({
       sessionId: compactParams.sessionId,
       sessionKey: compactParams.sessionKey,
-      sessionFile: compactParams.sessionFile,
+    });
+    const computation = computeTokenizerThresholdCompaction({
+      messages: compactParams.messages,
+      thresholdTokens: params.config.thresholdTokens,
+      counter,
+      force: compactParams.force,
+    });
+    if (!computation.compacted) {
+      return {
+        ok: true,
+        compacted: false,
+        ...(computation.reason ? { reason: computation.reason } : {}),
+      };
+    }
+
+    const state: TokenizerThresholdSessionState = {
+      compactedSourceLength: compactParams.messages.length,
+      compactedMessages: computation.messages,
+      tokensBefore: computation.tokensBefore,
+      tokensAfter: computation.tokensAfter,
+      summary: computation.summary,
+    };
+    setSessionCompactionState(stateKey, state);
+    return toCompactResult({
+      state,
+      thresholdTokens: params.config.thresholdTokens,
+      encoding: params.config.encoding,
       tokenBudget: compactParams.tokenBudget,
-      currentTokenCount: compactParams.currentTokenCount,
-      force: true,
-      runtimeContext: {
-        ...compactParams.runtimeContext,
-        checkpointTrigger,
-      },
     });
   };
 
@@ -137,19 +160,21 @@ export function createTokenizerThresholdContextEngine(params: {
       tokenBudget?: number;
       runtimeContext?: Record<string, unknown>;
     }) {
-      // Durable compaction runs only when the session write lock is free. Mid
-      // tool-loop pressure is handled by assemble windowing below.
+      // Engine-owned view only — no session write lock, safe in tool loops.
+      // Host compaction records are written when the host calls compact().
       const currentTokenCount = resolveCurrentTokenCount({
         messages: afterTurnParams.messages,
         counter,
       });
-      await compactIfOverThreshold({
+      if (currentTokenCount < params.config.thresholdTokens) {
+        return;
+      }
+      runEngineCompaction({
         sessionId: afterTurnParams.sessionId,
         sessionKey: afterTurnParams.sessionKey,
-        sessionFile: afterTurnParams.sessionFile,
+        messages: afterTurnParams.messages,
+        force: true,
         tokenBudget: afterTurnParams.tokenBudget,
-        currentTokenCount,
-        runtimeContext: afterTurnParams.runtimeContext,
       });
     },
 
@@ -163,14 +188,22 @@ export function createTokenizerThresholdContextEngine(params: {
       model?: string;
       prompt?: string;
     }) {
-      // Mid-loop ownsCompaction hook: afterTurn may not be able to durable
-      // compact under the live session lock, so return a trailing window that
-      // fits under the threshold for the next provider call.
+      // Prompt path: always return a local-tokenizer window under threshold so
+      // mid-loop model calls stay bounded even before/without durable host records.
       const windowed = windowMessagesToTokenBudget({
         messages: assembleParams.messages,
         thresholdTokens: params.config.thresholdTokens,
         counter,
       });
+      if (windowed.messages.length < assembleParams.messages.length) {
+        runEngineCompaction({
+          sessionId: assembleParams.sessionId,
+          sessionKey: assembleParams.sessionKey,
+          messages: assembleParams.messages,
+          force: true,
+          tokenBudget: assembleParams.tokenBudget,
+        });
+      }
       return {
         messages: windowed.messages,
         estimatedTokens: windowed.estimatedTokens,
@@ -195,13 +228,57 @@ export function createTokenizerThresholdContextEngine(params: {
       if (compactInFlight) {
         return compactInFlight;
       }
-      compactInFlight = delegateCompactionToRuntime({
-        ...compactParams,
-        force: compactParams.force ?? true,
-        runtimeContext: compactParams.runtimeContext,
-      }).finally(() => {
-        compactInFlight = null;
-      });
+
+      const runtimeMessages = compactParams.runtimeContext?.messages;
+      const messages = Array.isArray(runtimeMessages)
+        ? (runtimeMessages as AgentMessage[])
+        : undefined;
+
+      compactInFlight = Promise.resolve()
+        .then(() => {
+          if (compactParams.abortSignal?.aborted) {
+            return {
+              ok: false,
+              compacted: false,
+              reason: "aborted",
+            } satisfies CompactResult;
+          }
+          if (messages) {
+            return runEngineCompaction({
+              sessionId: compactParams.sessionId,
+              sessionKey: compactParams.sessionKey,
+              messages,
+              force: compactParams.force ?? true,
+              tokenBudget: compactParams.tokenBudget,
+            });
+          }
+
+          // Host overflow/`/compact` often omit the live message list. Reuse the
+          // engine view prepared by assemble/afterTurn so CompactResult counts
+          // still reach host checkpoint persistence.
+          const stateKey = resolveSessionStateKey({
+            sessionId: compactParams.sessionId,
+            sessionKey: compactParams.sessionKey,
+          });
+          const state = getSessionCompactionState(stateKey);
+          if (state) {
+            return toCompactResult({
+              state,
+              thresholdTokens: params.config.thresholdTokens,
+              encoding: params.config.encoding,
+              tokenBudget: compactParams.tokenBudget,
+            });
+          }
+          return {
+            ok: true,
+            compacted: false,
+            reason: "no messages available for engine compaction",
+          } satisfies CompactResult;
+        })
+        .finally(() => {
+          compactInFlight = null;
+        });
+
       return compactInFlight;
     },
   };

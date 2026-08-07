@@ -1,6 +1,6 @@
 /**
  * Tokenizer-threshold context engine plugin.
- * Counts tokens with a local tiktoken encoding and compacts at a fixed threshold.
+ * Owns threshold compaction with a local tiktoken trailing-window algorithm.
  */
 import { definePluginEntry } from "openclaw/plugin-sdk/plugin-entry";
 import { Type } from "typebox";
@@ -26,7 +26,7 @@ export default definePluginEntry({
   id: "tokenizer-threshold",
   name: "Tokenizer Threshold Context Engine",
   description:
-    "Count prompt tokens with a local tiktoken encoding and trigger compaction at a fixed threshold (default 113k).",
+    "Own threshold compaction with a local tiktoken window (default 113k) and report token counts to host checkpoints.",
   kind: "context-engine",
   configSchema,
   register(api) {

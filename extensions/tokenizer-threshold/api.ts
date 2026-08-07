@@ -10,5 +10,17 @@ export {
   buildContextEngineCheckpointTrigger,
   createTokenizerThresholdContextEngine,
 } from "./src/engine.js";
+export {
+  computeTokenizerThresholdCompaction,
+  type EngineCompactComputation,
+} from "./src/compact-logic.js";
+export {
+  clearSessionCompactionState,
+  getSessionCompactionState,
+  resetTokenizerThresholdSessionStatesForTest,
+  resolveSessionStateKey,
+  setSessionCompactionState,
+  type TokenizerThresholdSessionState,
+} from "./src/session-state.js";
 export { countMessageTokens, extractMessageText, type TokenCounter } from "./src/tokenizer.js";
 export { windowMessagesToTokenBudget } from "./src/window.js";
