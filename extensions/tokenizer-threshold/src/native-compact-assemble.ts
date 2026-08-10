@@ -83,8 +83,16 @@ function extractToolResultId(message: AgentMessage): string | undefined {
 }
 
 /**
- * Port of safeguard splitPreservedRecentTurns: keep the last N user/assistant
- * turns (and their tool results) verbatim; older history is summarizable.
+ * Port of safeguard `splitPreservedRecentTurns` (filter semantics, not a
+ * contiguous tail slice).
+ *
+ * Keeps the last N user turns (or a fallback recent conversation window) plus
+ * matching toolResults. Messages not in that set — including middle tool-loop
+ * turns after a single early user message — stay summarizable.
+ *
+ * Intentionally does NOT expand from earliest preserved index to end; that
+ * contiguous fill was plugin-local and made "1 user + long tool loop"
+ * preserve the entire transcript.
  */
 export function splitPreservedRecentTurns(params: {
   messages: AgentMessage[];
@@ -114,11 +122,12 @@ export function splitPreservedRecentTurns(params: {
       }
     }
   }
+  // Native: no conversation turns → nothing to preserve as recent context.
   if (conversationIndexes.length === 0) {
     return {
-      summarizableMessages: [],
-      preservedMessages: params.messages,
-      preservedStartIndex: 0,
+      summarizableMessages: params.messages,
+      preservedMessages: [],
+      preservedStartIndex: params.messages.length,
     };
   }
 
@@ -133,6 +142,8 @@ export function splitPreservedRecentTurns(params: {
       }
     }
   } else {
+    // Same fallback as safeguard: keep every user turn, then fill from the
+    // newest conversation messages until ~2x preserveTurns.
     const fallbackMessageCount = preserveTurns * 2;
     for (const userIndex of userIndexes) {
       preservedIndexSet.add(userIndex);
@@ -171,14 +182,24 @@ export function splitPreservedRecentTurns(params: {
     }
   }
   if (preservedToolCallIds.size > 0) {
+    // Native scans from the first preserved conversation index so only
+    // toolResults paired with preserved assistants are kept verbatim.
+    let firstPreservedIndex = -1;
     for (let i = 0; i < params.messages.length; i += 1) {
-      const role = messageRole(params.messages[i]!);
-      if (role !== "toolResult" && role !== "tool") {
-        continue;
+      if (preservedIndexSet.has(i)) {
+        firstPreservedIndex = i;
+        break;
       }
-      const toolCallId = extractToolResultId(params.messages[i]!);
-      if (toolCallId && preservedToolCallIds.has(toolCallId)) {
-        preservedIndexSet.add(i);
+    }
+    if (firstPreservedIndex >= 0) {
+      for (let i = firstPreservedIndex; i < params.messages.length; i += 1) {
+        if (messageRole(params.messages[i]!) !== "toolResult") {
+          continue;
+        }
+        const toolCallId = extractToolResultId(params.messages[i]!);
+        if (toolCallId && preservedToolCallIds.has(toolCallId)) {
+          preservedIndexSet.add(i);
+        }
       }
     }
   }
@@ -187,15 +208,44 @@ export function splitPreservedRecentTurns(params: {
   for (const index of preservedIndexSet) {
     preservedStartIndex = Math.min(preservedStartIndex, index);
   }
-  // Include any interstitial messages between the first preserved conversation
-  // turn and the end so tool pairs stay contiguous.
-  for (let i = preservedStartIndex; i < params.messages.length; i += 1) {
-    preservedIndexSet.add(i);
-  }
 
-  const summarizableMessages = params.messages.slice(0, preservedStartIndex);
-  const preservedMessages = params.messages.slice(preservedStartIndex);
+  // Native filter semantics: summarizable = not preserved; preserved keeps
+  // only user/assistant/toolResult members of the set (order preserved).
+  const summarizableMessages = dropOrphanToolResults(
+    params.messages.filter((_, idx) => !preservedIndexSet.has(idx)),
+  );
+  const preservedMessages = params.messages
+    .filter((_, idx) => preservedIndexSet.has(idx))
+    .filter((msg) => {
+      const role = messageRole(msg);
+      return role === "user" || role === "assistant" || role === "toolResult";
+    });
   return { summarizableMessages, preservedMessages, preservedStartIndex };
+}
+
+/**
+ * Lightweight stand-in for core repairToolUseResultPairing on the summarizable
+ * side only: drop toolResults whose call ids are not present in remaining
+ * assistant messages (plugin boundary cannot import core repair helpers).
+ */
+function dropOrphanToolResults(messages: AgentMessage[]): AgentMessage[] {
+  const toolCallIds = new Set<string>();
+  for (const message of messages) {
+    if (messageRole(message) !== "assistant") {
+      continue;
+    }
+    for (const id of extractAssistantToolCallIds(message)) {
+      toolCallIds.add(id);
+    }
+  }
+  return messages.filter((message) => {
+    const role = messageRole(message);
+    if (role !== "toolResult" && role !== "tool") {
+      return true;
+    }
+    const toolCallId = extractToolResultId(message);
+    return !toolCallId || toolCallIds.has(toolCallId);
+  });
 }
 
 /** Deterministic stand-in for LLM summary when assemble has no llm capability. */

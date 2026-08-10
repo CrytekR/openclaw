@@ -68,6 +68,49 @@ describe("splitPreservedRecentTurns", () => {
     expect(split.preservedMessages.at(0)).toMatchObject({ content: "keep-1" });
     expect(split.preservedMessages.at(-1)).toMatchObject({ content: "final" });
   });
+
+  it("does not preserve the whole tool loop after a single early user message", () => {
+    // Native fallback: keep the user + newest ~5 conversation turns, not a
+    // contiguous slice from the user through every interstitial tool message.
+    const messages: Array<Record<string, unknown>> = [{ role: "user", content: "do the task" }];
+    for (let i = 0; i < 20; i += 1) {
+      messages.push({
+        role: "assistant",
+        content: [{ type: "toolCall", id: `call-${i}`, name: "bash", arguments: {} }],
+      });
+      messages.push({
+        role: "toolResult",
+        toolCallId: `call-${i}`,
+        content: `output-${i} ${"x".repeat(200)}`,
+      });
+    }
+    messages.push({ role: "assistant", content: "done" });
+
+    const split = splitPreservedRecentTurns({
+      messages: messages as never,
+      recentTurnsPreserve: 3,
+    });
+
+    // Fallback budget is preserveTurns*2 (=6) conversation messages, so the
+    // middle tool-loop assistants must remain summarizable.
+    expect(split.summarizableMessages.length).toBeGreaterThan(10);
+    expect(split.preservedMessages.length).toBeLessThan(messages.length / 2);
+    expect(
+      split.preservedMessages.some((m) => (m as { content?: string }).content === "do the task"),
+    ).toBe(true);
+    expect(split.preservedMessages.at(-1)).toMatchObject({ content: "done" });
+    // Early tool outputs should be summarizable, not verbatim-preserved.
+    expect(
+      split.summarizableMessages.some((m) =>
+        String((m as { content?: string }).content ?? "").includes("output-0"),
+      ),
+    ).toBe(true);
+    expect(
+      split.preservedMessages.some((m) =>
+        String((m as { content?: string }).content ?? "").includes("output-0"),
+      ),
+    ).toBe(false);
+  });
 });
 
 describe("assembleNativeStyleCompactedMessages", () => {

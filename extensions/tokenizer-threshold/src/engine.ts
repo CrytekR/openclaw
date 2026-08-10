@@ -185,11 +185,8 @@ export function createTokenizerThresholdContextEngine(params: {
     const state: TokenizerThresholdSessionState = {
       compactedSourceLength: compactParams.messages.length,
       summarizableCount: computation.summarizableCount,
-      summarizableFingerprint:
-        reusable.summarizableFingerprint ||
-        fingerprintSummarizableMessages(
-          compactParams.messages.slice(0, computation.preservedStartIndex),
-        ),
+      // Fingerprint the actual summarizable set (may be non-contiguous).
+      summarizableFingerprint: reusable.summarizableFingerprint,
       compactedMessages: computation.messages,
       tokensBefore: computation.tokensBefore,
       tokensAfter: computation.tokensAfter,
@@ -326,11 +323,9 @@ export function createTokenizerThresholdContextEngine(params: {
         const state: TokenizerThresholdSessionState = {
           compactedSourceLength: assembleParams.messages.length,
           summarizableCount: computation.summarizableCount,
-          summarizableFingerprint:
-            reusable.summarizableFingerprint ||
-            fingerprintSummarizableMessages(
-              assembleParams.messages.slice(0, computation.preservedStartIndex),
-            ),
+          // Fingerprint the actual summarizable set (native filter may be
+          // non-contiguous — do not derive it from a contiguous slice).
+          summarizableFingerprint: reusable.summarizableFingerprint,
           compactedMessages: computation.messages,
           tokensBefore: computation.tokensBefore,
           tokensAfter: computation.tokensAfter,
