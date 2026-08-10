@@ -1,10 +1,10 @@
 /**
- * Engine-owned compaction: native-style summary message + preserved recent turns.
+ * Engine-owned compaction: native-style summary message + keepRecentTokens tail.
  */
 import type { AgentMessage } from "openclaw/plugin-sdk/agent-harness-runtime";
+import { splitMessagesAtCutPoint } from "./cut-point.js";
 import {
   assembleNativeStyleCompactedMessages,
-  splitPreservedRecentTurns,
   type NativeCompactAssembly,
 } from "./native-compact-assemble.js";
 import { countMessageTokens, type TokenCounter } from "./tokenizer.js";
@@ -17,7 +17,7 @@ export function computeTokenizerThresholdCompaction(params: {
   thresholdTokens: number;
   counter: TokenCounter;
   force?: boolean;
-  recentTurnsPreserve?: number;
+  keepRecentTokens?: number;
   summaryOverride?: string;
 }): EngineCompactComputation {
   const tokensBefore = countMessageTokens({
@@ -35,6 +35,7 @@ export function computeTokenizerThresholdCompaction(params: {
       summary: "",
       preservedStartIndex: 0,
       summarizableCount: 0,
+      isSplitTurn: false,
     };
   }
 
@@ -49,6 +50,7 @@ export function computeTokenizerThresholdCompaction(params: {
       summary: "",
       preservedStartIndex: params.messages.length,
       summarizableCount: 0,
+      isSplitTurn: false,
     };
   }
 
@@ -56,10 +58,10 @@ export function computeTokenizerThresholdCompaction(params: {
     messages: params.messages,
     thresholdTokens: params.thresholdTokens,
     counter: params.counter,
-    recentTurnsPreserve: params.recentTurnsPreserve,
+    keepRecentTokens: params.keepRecentTokens ?? 20_000,
     summaryOverride: params.summaryOverride,
     countMessageTokens: (messages) => countMessageTokens({ messages, counter: params.counter }),
   });
 }
 
-export { splitPreservedRecentTurns };
+export { splitMessagesAtCutPoint };

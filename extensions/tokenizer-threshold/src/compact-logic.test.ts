@@ -1,12 +1,92 @@
 import { describe, expect, it } from "vitest";
 import { computeTokenizerThresholdCompaction } from "./compact-logic.js";
+import { findMessageCutPoint, splitMessagesAtCutPoint } from "./cut-point.js";
 import {
   COMPACTION_SUMMARY_PREFIX,
   COMPACTION_SUMMARY_SUFFIX,
   assembleNativeStyleCompactedMessages,
-  splitPreservedRecentTurns,
 } from "./native-compact-assemble.js";
 import { getLocalTokenCounter, countMessageTokens } from "./tokenizer.js";
+
+describe("findMessageCutPoint", () => {
+  const counter = getLocalTokenCounter("cl100k_base");
+
+  it("keeps a contiguous recent token budget and never cuts on toolResult", () => {
+    const messages: Array<Record<string, unknown>> = [{ role: "user", content: "task start" }];
+    for (let i = 0; i < 30; i += 1) {
+      messages.push({
+        role: "assistant",
+        content: [{ type: "toolCall", id: `call-${i}`, name: "bash", arguments: { i } }],
+      });
+      messages.push({
+        role: "toolResult",
+        toolCallId: `call-${i}`,
+        content: `output-${i} ${"word ".repeat(40)}`,
+      });
+    }
+    messages.push({ role: "assistant", content: "done" });
+
+    const cut = findMessageCutPoint({
+      messages: messages as never,
+      keepRecentTokens: 400,
+      counter,
+    });
+
+    expect(cut.firstKeptIndex).toBeGreaterThan(0);
+    expect((messages[cut.firstKeptIndex] as { role?: string }).role).not.toBe("toolResult");
+
+    const split = splitMessagesAtCutPoint({
+      messages: messages as never,
+      keepRecentTokens: 400,
+      counter,
+    });
+    expect(split.preservedMessages[0]).toBe(messages[cut.firstKeptIndex]);
+    expect(split.preservedMessages.at(-1)).toMatchObject({ content: "done" });
+    // Contiguous tail: preserved length equals end - firstKept
+    expect(split.preservedMessages).toHaveLength(messages.length - cut.firstKeptIndex);
+    expect(split.summarizableMessages.length).toBeGreaterThan(0);
+    // Early tool output is summarizable, not in the keep-recent tail.
+    expect(
+      split.summarizableMessages.some((m) =>
+        String((m as { content?: string }).content ?? "").includes("output-0"),
+      ),
+    ).toBe(true);
+  });
+
+  it("marks split turns when the cut lands mid-turn on an assistant", () => {
+    const messages = [
+      { role: "user", content: "please do work" },
+      {
+        role: "assistant",
+        content: [{ type: "toolCall", id: "c1", name: "read", arguments: {} }],
+      },
+      { role: "toolResult", toolCallId: "c1", content: "a".repeat(4_000) },
+      {
+        role: "assistant",
+        content: [{ type: "toolCall", id: "c2", name: "read", arguments: {} }],
+      },
+      { role: "toolResult", toolCallId: "c2", content: "b".repeat(4_000) },
+      { role: "assistant", content: "tail" },
+    ];
+    const cut = findMessageCutPoint({
+      messages: messages as never,
+      keepRecentTokens: 50,
+      counter,
+    });
+    // Small budget snaps near the end; if cut is not a user, turn start is the user.
+    if ((messages[cut.firstKeptIndex] as { role: string }).role !== "user") {
+      expect(cut.isSplitTurn).toBe(true);
+      expect(cut.turnStartIndex).toBe(0);
+      const split = splitMessagesAtCutPoint({
+        messages: messages as never,
+        keepRecentTokens: 50,
+        counter,
+      });
+      // Turn prefix before firstKept is folded into summarizable.
+      expect(split.summarizableMessages.length).toBeGreaterThan(0);
+    }
+  });
+});
 
 describe("computeTokenizerThresholdCompaction", () => {
   const counter = getLocalTokenCounter("cl100k_base");
@@ -21,7 +101,7 @@ describe("computeTokenizerThresholdCompaction", () => {
     expect(result.reason).toBe("below threshold");
   });
 
-  it("compacts oversized transcripts to summary + preserved recent turns", () => {
+  it("compacts oversized transcripts to summary + keep-recent tail", () => {
     const result = computeTokenizerThresholdCompaction({
       messages: [
         { role: "user", content: "word ".repeat(2_000) },
@@ -31,7 +111,7 @@ describe("computeTokenizerThresholdCompaction", () => {
       thresholdTokens: 200,
       counter,
       force: true,
-      recentTurnsPreserve: 1,
+      keepRecentTokens: 80,
     });
     expect(result.compacted).toBe(true);
     expect(result.tokensAfter).toBeLessThan(result.tokensBefore);
@@ -41,75 +121,6 @@ describe("computeTokenizerThresholdCompaction", () => {
     expect(first.role).toBe("user");
     expect(String(first.content)).toContain(COMPACTION_SUMMARY_PREFIX.trim());
     expect(String(first.content)).toContain(COMPACTION_SUMMARY_SUFFIX.trim());
-  });
-});
-
-describe("splitPreservedRecentTurns", () => {
-  it("keeps the last N user turns and trailing tool pairs", () => {
-    const messages = [
-      { role: "user", content: "old-1" },
-      { role: "assistant", content: "old-a" },
-      { role: "user", content: "keep-1" },
-      {
-        role: "assistant",
-        content: [{ type: "toolCall", id: "call-1", name: "read", arguments: {} }],
-      },
-      { role: "toolResult", toolCallId: "call-1", content: "ok" },
-      { role: "user", content: "keep-2" },
-      { role: "assistant", content: "final" },
-    ] as const;
-
-    const split = splitPreservedRecentTurns({
-      messages: [...messages],
-      recentTurnsPreserve: 2,
-    });
-
-    expect(split.summarizableMessages).toEqual([messages[0], messages[1]]);
-    expect(split.preservedMessages.at(0)).toMatchObject({ content: "keep-1" });
-    expect(split.preservedMessages.at(-1)).toMatchObject({ content: "final" });
-  });
-
-  it("does not preserve the whole tool loop after a single early user message", () => {
-    // Native fallback: keep the user + newest ~5 conversation turns, not a
-    // contiguous slice from the user through every interstitial tool message.
-    const messages: Array<Record<string, unknown>> = [{ role: "user", content: "do the task" }];
-    for (let i = 0; i < 20; i += 1) {
-      messages.push({
-        role: "assistant",
-        content: [{ type: "toolCall", id: `call-${i}`, name: "bash", arguments: {} }],
-      });
-      messages.push({
-        role: "toolResult",
-        toolCallId: `call-${i}`,
-        content: `output-${i} ${"x".repeat(200)}`,
-      });
-    }
-    messages.push({ role: "assistant", content: "done" });
-
-    const split = splitPreservedRecentTurns({
-      messages: messages as never,
-      recentTurnsPreserve: 3,
-    });
-
-    // Fallback budget is preserveTurns*2 (=6) conversation messages, so the
-    // middle tool-loop assistants must remain summarizable.
-    expect(split.summarizableMessages.length).toBeGreaterThan(10);
-    expect(split.preservedMessages.length).toBeLessThan(messages.length / 2);
-    expect(
-      split.preservedMessages.some((m) => (m as { content?: string }).content === "do the task"),
-    ).toBe(true);
-    expect(split.preservedMessages.at(-1)).toMatchObject({ content: "done" });
-    // Early tool outputs should be summarizable, not verbatim-preserved.
-    expect(
-      split.summarizableMessages.some((m) =>
-        String((m as { content?: string }).content ?? "").includes("output-0"),
-      ),
-    ).toBe(true);
-    expect(
-      split.preservedMessages.some((m) =>
-        String((m as { content?: string }).content ?? "").includes("output-0"),
-      ),
-    ).toBe(false);
   });
 });
 
@@ -126,7 +137,7 @@ describe("assembleNativeStyleCompactedMessages", () => {
       messages,
       thresholdTokens: 200,
       counter,
-      recentTurnsPreserve: 1,
+      keepRecentTokens: 80,
       summaryOverride: "LLM summary of earlier work",
       countMessageTokens: (msgs) => countMessageTokens({ messages: msgs, counter }),
     });

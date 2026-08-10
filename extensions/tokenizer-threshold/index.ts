@@ -1,6 +1,6 @@
 /**
  * Tokenizer-threshold context engine plugin.
- * Owns threshold compaction with native-style summary + preserved recent turns.
+ * Owns threshold compaction with agent-core findCutPoint keep-recent tail.
  */
 import { definePluginEntry } from "openclaw/plugin-sdk/plugin-entry";
 import { Type } from "typebox";
@@ -18,7 +18,7 @@ const configSchema = Type.Object(
         Type.Literal("r50k_base"),
       ]),
     ),
-    recentTurnsPreserve: Type.Optional(Type.Integer({ minimum: 1, maximum: 12 })),
+    keepRecentTokens: Type.Optional(Type.Integer({ minimum: 1 })),
   },
   { additionalProperties: false },
 );
@@ -27,7 +27,7 @@ export default definePluginEntry({
   id: "tokenizer-threshold",
   name: "Tokenizer Threshold Context Engine",
   description:
-    "Own threshold compaction with native-style summary + preserved recent turns (default 113k) and report token counts to host checkpoints.",
+    "Own threshold compaction with findCutPoint keep-recent tail (default 113k / 20k) and report token counts to host checkpoints.",
   kind: "context-engine",
   configSchema,
   register(api) {

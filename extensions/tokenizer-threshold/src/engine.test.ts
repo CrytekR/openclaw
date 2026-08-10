@@ -25,12 +25,12 @@ describe("createTokenizerThresholdContextEngine", () => {
     resetTokenizerThresholdSessionStatesForTest();
   });
 
-  it("assembles native-style summary + preserved turns when over threshold", async () => {
+  it("assembles summary + keepRecentTokens tail when over threshold", async () => {
     const engine = createTokenizerThresholdContextEngine({
       config: {
         thresholdTokens: 200,
         encoding: "cl100k_base",
-        recentTurnsPreserve: 1,
+        keepRecentTokens: 80,
       },
     });
 
@@ -59,7 +59,7 @@ describe("createTokenizerThresholdContextEngine", () => {
       config: {
         thresholdTokens: 113_000,
         encoding: "cl100k_base",
-        recentTurnsPreserve: 3,
+        keepRecentTokens: 20_000,
       },
     });
 
@@ -77,7 +77,7 @@ describe("createTokenizerThresholdContextEngine", () => {
       config: {
         thresholdTokens: 200,
         encoding: "cl100k_base",
-        recentTurnsPreserve: 1,
+        keepRecentTokens: 80,
       },
     });
     const messages = [
@@ -131,7 +131,7 @@ describe("createTokenizerThresholdContextEngine", () => {
       config: {
         thresholdTokens: 113_000,
         encoding: "cl100k_base",
-        recentTurnsPreserve: 3,
+        keepRecentTokens: 20_000,
       },
     });
 
@@ -159,7 +159,7 @@ describe("createTokenizerThresholdContextEngine", () => {
       config: {
         thresholdTokens: 200,
         encoding: "cl100k_base",
-        recentTurnsPreserve: 1,
+        keepRecentTokens: 80,
       },
     });
 
@@ -213,7 +213,7 @@ describe("createTokenizerThresholdContextEngine", () => {
       config: {
         thresholdTokens: 200,
         encoding: "cl100k_base",
-        recentTurnsPreserve: 1,
+        keepRecentTokens: 80,
       },
     });
     const messages = [
@@ -241,7 +241,7 @@ describe("createTokenizerThresholdContextEngine", () => {
       config: {
         thresholdTokens: 200,
         encoding: "cl100k_base",
-        recentTurnsPreserve: 1,
+        keepRecentTokens: 80,
       },
     });
     const messages = [

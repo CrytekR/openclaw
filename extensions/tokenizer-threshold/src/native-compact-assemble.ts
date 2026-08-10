@@ -1,13 +1,15 @@
 /**
  * Native-style compaction message assembly for the context engine.
  *
- * Mirrors agent-core / safeguard shape:
- *   [user message wrapping <summary>...</summary>] + preserved recent turns
+ * Keep-tail uses agent-core findCutPoint semantics (keepRecentTokens), then
+ * assembles:
+ *   [user message wrapping <summary>...</summary>] + preserved contiguous tail
  *
- * Summary text may be extractive (assemble / lock-free path) or LLM-produced
- * (afterTurn when runtimeContext.llm is available).
+ * Summary text may be extractive (assemble) or LLM-produced (afterTurn/compact
+ * when runtimeContext.llm is available).
  */
 import type { AgentMessage } from "openclaw/plugin-sdk/agent-harness-runtime";
+import { splitMessagesAtCutPoint } from "./cut-point.js";
 import { extractMessageText, type TokenCounter } from "./tokenizer.js";
 import { windowMessagesToTokenBudget } from "./window.js";
 
@@ -20,8 +22,6 @@ export const COMPACTION_SUMMARY_PREFIX = `The conversation history before this p
 export const COMPACTION_SUMMARY_SUFFIX = `
 </summary>`;
 
-const DEFAULT_RECENT_TURNS_PRESERVE = 3;
-const MAX_RECENT_TURNS_PRESERVE = 12;
 const EXTRACTIVE_MAX_CHARS = 12_000;
 const EXTRACTIVE_PER_MESSAGE_CHARS = 800;
 
@@ -32,220 +32,15 @@ export type NativeCompactAssembly = {
   tokensBefore: number;
   tokensAfter: number;
   summary: string;
-  /** Index where preserved recent turns start in the source messages. */
+  /** Index of the first verbatim-kept source message (findCutPoint firstKept). */
   preservedStartIndex: number;
   summarizableCount: number;
+  isSplitTurn: boolean;
 };
-
-function clampRecentTurnsPreserve(value: number | undefined): number {
-  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
-    return DEFAULT_RECENT_TURNS_PRESERVE;
-  }
-  return Math.min(MAX_RECENT_TURNS_PRESERVE, Math.floor(value));
-}
 
 function messageRole(message: AgentMessage): string | undefined {
   const role = (message as { role?: unknown }).role;
   return typeof role === "string" ? role : undefined;
-}
-
-function extractAssistantToolCallIds(message: AgentMessage): string[] {
-  const content = (message as { content?: unknown }).content;
-  if (!Array.isArray(content)) {
-    return [];
-  }
-  const ids: string[] = [];
-  for (const block of content) {
-    if (!block || typeof block !== "object") {
-      continue;
-    }
-    const typed = block as { type?: unknown; id?: unknown };
-    if (
-      (typed.type === "toolCall" || typed.type === "toolUse" || typed.type === "functionCall") &&
-      typeof typed.id === "string" &&
-      typed.id.trim()
-    ) {
-      ids.push(typed.id);
-    }
-  }
-  return ids;
-}
-
-function extractToolResultId(message: AgentMessage): string | undefined {
-  const record = message as { toolCallId?: unknown; tool_use_id?: unknown };
-  if (typeof record.toolCallId === "string" && record.toolCallId.trim()) {
-    return record.toolCallId;
-  }
-  if (typeof record.tool_use_id === "string" && record.tool_use_id.trim()) {
-    return record.tool_use_id;
-  }
-  return undefined;
-}
-
-/**
- * Port of safeguard `splitPreservedRecentTurns` (filter semantics, not a
- * contiguous tail slice).
- *
- * Keeps the last N user turns (or a fallback recent conversation window) plus
- * matching toolResults. Messages not in that set — including middle tool-loop
- * turns after a single early user message — stay summarizable.
- *
- * Intentionally does NOT expand from earliest preserved index to end; that
- * contiguous fill was plugin-local and made "1 user + long tool loop"
- * preserve the entire transcript.
- */
-export function splitPreservedRecentTurns(params: {
-  messages: AgentMessage[];
-  recentTurnsPreserve?: number;
-}): {
-  summarizableMessages: AgentMessage[];
-  preservedMessages: AgentMessage[];
-  preservedStartIndex: number;
-} {
-  const preserveTurns = clampRecentTurnsPreserve(params.recentTurnsPreserve);
-  if (preserveTurns <= 0 || params.messages.length === 0) {
-    return {
-      summarizableMessages: params.messages,
-      preservedMessages: [],
-      preservedStartIndex: params.messages.length,
-    };
-  }
-
-  const conversationIndexes: number[] = [];
-  const userIndexes: number[] = [];
-  for (let i = 0; i < params.messages.length; i += 1) {
-    const role = messageRole(params.messages[i]!);
-    if (role === "user" || role === "assistant") {
-      conversationIndexes.push(i);
-      if (role === "user") {
-        userIndexes.push(i);
-      }
-    }
-  }
-  // Native: no conversation turns → nothing to preserve as recent context.
-  if (conversationIndexes.length === 0) {
-    return {
-      summarizableMessages: params.messages,
-      preservedMessages: [],
-      preservedStartIndex: params.messages.length,
-    };
-  }
-
-  const preservedIndexSet = new Set<number>();
-  if (userIndexes.length >= preserveTurns) {
-    const boundaryStartIndex = userIndexes[userIndexes.length - preserveTurns] ?? -1;
-    if (boundaryStartIndex >= 0) {
-      for (const index of conversationIndexes) {
-        if (index >= boundaryStartIndex) {
-          preservedIndexSet.add(index);
-        }
-      }
-    }
-  } else {
-    // Same fallback as safeguard: keep every user turn, then fill from the
-    // newest conversation messages until ~2x preserveTurns.
-    const fallbackMessageCount = preserveTurns * 2;
-    for (const userIndex of userIndexes) {
-      preservedIndexSet.add(userIndex);
-    }
-    for (let i = conversationIndexes.length - 1; i >= 0; i -= 1) {
-      const index = conversationIndexes[i];
-      if (index === undefined) {
-        continue;
-      }
-      preservedIndexSet.add(index);
-      if (preservedIndexSet.size >= fallbackMessageCount) {
-        break;
-      }
-    }
-  }
-
-  if (preservedIndexSet.size === 0) {
-    return {
-      summarizableMessages: params.messages,
-      preservedMessages: [],
-      preservedStartIndex: params.messages.length,
-    };
-  }
-
-  const preservedToolCallIds = new Set<string>();
-  for (let i = 0; i < params.messages.length; i += 1) {
-    if (!preservedIndexSet.has(i)) {
-      continue;
-    }
-    const message = params.messages[i]!;
-    if (messageRole(message) !== "assistant") {
-      continue;
-    }
-    for (const id of extractAssistantToolCallIds(message)) {
-      preservedToolCallIds.add(id);
-    }
-  }
-  if (preservedToolCallIds.size > 0) {
-    // Native scans from the first preserved conversation index so only
-    // toolResults paired with preserved assistants are kept verbatim.
-    let firstPreservedIndex = -1;
-    for (let i = 0; i < params.messages.length; i += 1) {
-      if (preservedIndexSet.has(i)) {
-        firstPreservedIndex = i;
-        break;
-      }
-    }
-    if (firstPreservedIndex >= 0) {
-      for (let i = firstPreservedIndex; i < params.messages.length; i += 1) {
-        if (messageRole(params.messages[i]!) !== "toolResult") {
-          continue;
-        }
-        const toolCallId = extractToolResultId(params.messages[i]!);
-        if (toolCallId && preservedToolCallIds.has(toolCallId)) {
-          preservedIndexSet.add(i);
-        }
-      }
-    }
-  }
-
-  let preservedStartIndex = params.messages.length;
-  for (const index of preservedIndexSet) {
-    preservedStartIndex = Math.min(preservedStartIndex, index);
-  }
-
-  // Native filter semantics: summarizable = not preserved; preserved keeps
-  // only user/assistant/toolResult members of the set (order preserved).
-  const summarizableMessages = dropOrphanToolResults(
-    params.messages.filter((_, idx) => !preservedIndexSet.has(idx)),
-  );
-  const preservedMessages = params.messages
-    .filter((_, idx) => preservedIndexSet.has(idx))
-    .filter((msg) => {
-      const role = messageRole(msg);
-      return role === "user" || role === "assistant" || role === "toolResult";
-    });
-  return { summarizableMessages, preservedMessages, preservedStartIndex };
-}
-
-/**
- * Lightweight stand-in for core repairToolUseResultPairing on the summarizable
- * side only: drop toolResults whose call ids are not present in remaining
- * assistant messages (plugin boundary cannot import core repair helpers).
- */
-function dropOrphanToolResults(messages: AgentMessage[]): AgentMessage[] {
-  const toolCallIds = new Set<string>();
-  for (const message of messages) {
-    if (messageRole(message) !== "assistant") {
-      continue;
-    }
-    for (const id of extractAssistantToolCallIds(message)) {
-      toolCallIds.add(id);
-    }
-  }
-  return messages.filter((message) => {
-    const role = messageRole(message);
-    if (role !== "toolResult" && role !== "tool") {
-      return true;
-    }
-    const toolCallId = extractToolResultId(message);
-    return !toolCallId || toolCallIds.has(toolCallId);
-  });
 }
 
 /** Deterministic stand-in for LLM summary when assemble has no llm capability. */
@@ -304,7 +99,8 @@ export function assembleNativeStyleCompactedMessages(params: {
   messages: AgentMessage[];
   thresholdTokens: number;
   counter: TokenCounter;
-  recentTurnsPreserve?: number;
+  /** Approximate recent-context tokens to keep verbatim (agent-core default: 20000). */
+  keepRecentTokens: number;
   /** Prefer a previously generated LLM/extractive summary for the summarizable prefix. */
   summaryOverride?: string;
   countMessageTokens: (messages: readonly AgentMessage[]) => number;
@@ -320,6 +116,7 @@ export function assembleNativeStyleCompactedMessages(params: {
       summary: "",
       preservedStartIndex: 0,
       summarizableCount: 0,
+      isSplitTurn: false,
     };
   }
   if (tokensBefore < params.thresholdTokens) {
@@ -332,16 +129,18 @@ export function assembleNativeStyleCompactedMessages(params: {
       summary: "",
       preservedStartIndex: params.messages.length,
       summarizableCount: 0,
+      isSplitTurn: false,
     };
   }
 
-  const split = splitPreservedRecentTurns({
+  const split = splitMessagesAtCutPoint({
     messages: params.messages,
-    recentTurnsPreserve: params.recentTurnsPreserve,
+    keepRecentTokens: params.keepRecentTokens,
+    counter: params.counter,
   });
 
   if (split.summarizableMessages.length === 0) {
-    // Nothing older to summarize — fall back to trailing window.
+    // Nothing older to summarize — fall back to trailing window under threshold.
     const windowed = windowMessagesToTokenBudget({
       messages: params.messages,
       thresholdTokens: params.thresholdTokens,
@@ -356,6 +155,7 @@ export function assembleNativeStyleCompactedMessages(params: {
       summary: "",
       preservedStartIndex: params.messages.length - windowed.messages.length,
       summarizableCount: 0,
+      isSplitTurn: split.isSplitTurn,
     };
   }
 
@@ -382,9 +182,8 @@ export function assembleNativeStyleCompactedMessages(params: {
   let assembled = [summaryMessage, ...preserved];
   let tokensAfter = params.countMessageTokens(assembled);
 
-  // If the summary + preserved recent turns still overflow, shrink the
-  // preserved tail with the same trailing-window helper native paths use as a
-  // last resort for oversized suffixes.
+  // If summary + keep-recent tail still overflow the engine threshold, shrink
+  // the preserved tail with the trailing-window helper (last resort).
   if (tokensAfter >= params.thresholdTokens && preserved.length > 0) {
     const preservedBudget = Math.max(
       1,
@@ -400,9 +199,6 @@ export function assembleNativeStyleCompactedMessages(params: {
     tokensAfter = params.countMessageTokens(assembled);
   }
 
-  // Summary alone can still exceed a tiny threshold (or an oversized LLM
-  // override). Fall back to a pure trailing window so assemble always returns
-  // a prompt that fits under budget when possible.
   if (tokensAfter >= params.thresholdTokens) {
     const windowed = windowMessagesToTokenBudget({
       messages: params.messages,
@@ -421,6 +217,7 @@ export function assembleNativeStyleCompactedMessages(params: {
       summary,
       preservedStartIndex: params.messages.length - windowed.messages.length,
       summarizableCount: split.summarizableMessages.length,
+      isSplitTurn: split.isSplitTurn,
     };
   }
 
@@ -430,7 +227,8 @@ export function assembleNativeStyleCompactedMessages(params: {
     tokensBefore,
     tokensAfter,
     summary,
-    preservedStartIndex: split.preservedStartIndex,
+    preservedStartIndex: split.firstKeptIndex,
     summarizableCount: split.summarizableMessages.length,
+    isSplitTurn: split.isSplitTurn,
   };
 }

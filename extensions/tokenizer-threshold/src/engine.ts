@@ -1,8 +1,8 @@
 /**
  * Context engine that owns threshold compaction with a local tokenizer.
  *
- * Compaction mirrors native agent-core / safeguard shape:
- *   [user message wrapping <summary>...</summary>] + preserved recent turns
+ * Compaction mirrors agent-core prepareCompaction / findCutPoint:
+ *   [user message wrapping <summary>...</summary>] + keepRecentTokens contiguous tail
  *
  * - assemble() returns that compacted message list under the local threshold
  *   (extractive summary when no LLM summary is cached yet)
@@ -14,7 +14,7 @@
  */
 import type { AgentMessage } from "openclaw/plugin-sdk/agent-harness-runtime";
 import { buildMemorySystemPromptAddition } from "openclaw/plugin-sdk/core";
-import { computeTokenizerThresholdCompaction, splitPreservedRecentTurns } from "./compact-logic.js";
+import { computeTokenizerThresholdCompaction, splitMessagesAtCutPoint } from "./compact-logic.js";
 import type { TokenizerThresholdConfig } from "./config.js";
 import { summarizeWithRuntimeLlm } from "./llm-summary.js";
 import {
@@ -119,11 +119,13 @@ function toCompactResult(params: {
 function resolveReusableSummary(params: {
   stateKey: string;
   messages: AgentMessage[];
-  recentTurnsPreserve: number;
+  keepRecentTokens: number;
+  counter: TokenCounter;
 }): { summary?: string; summaryFromLlm: boolean; summarizableFingerprint: string } {
-  const split = splitPreservedRecentTurns({
+  const split = splitMessagesAtCutPoint({
     messages: params.messages,
-    recentTurnsPreserve: params.recentTurnsPreserve,
+    keepRecentTokens: params.keepRecentTokens,
+    counter: params.counter,
   });
   const summarizableFingerprint = fingerprintSummarizableMessages(split.summarizableMessages);
   const existing = getSessionCompactionState(params.stateKey);
@@ -159,7 +161,8 @@ export function createTokenizerThresholdContextEngine(params: {
     const reusable = resolveReusableSummary({
       stateKey,
       messages: compactParams.messages,
-      recentTurnsPreserve: params.config.recentTurnsPreserve,
+      keepRecentTokens: params.config.keepRecentTokens,
+      counter,
     });
     const summaryOverride = compactParams.summaryOverride?.trim() || reusable.summary;
     const computation = computeTokenizerThresholdCompaction({
@@ -167,7 +170,7 @@ export function createTokenizerThresholdContextEngine(params: {
       thresholdTokens: params.config.thresholdTokens,
       counter,
       force: compactParams.force,
-      recentTurnsPreserve: params.config.recentTurnsPreserve,
+      keepRecentTokens: params.config.keepRecentTokens,
       summaryOverride,
     });
     if (!computation.compacted) {
@@ -242,16 +245,18 @@ export function createTokenizerThresholdContextEngine(params: {
       const reusable = resolveReusableSummary({
         stateKey,
         messages: afterTurnParams.messages,
-        recentTurnsPreserve: params.config.recentTurnsPreserve,
+        keepRecentTokens: params.config.keepRecentTokens,
+        counter,
       });
 
       // Prefer LLM summary when the host provided runtimeContext.llm and we do
       // not already have a matching LLM-backed summary for this prefix.
       const llm = resolveRuntimeLlm(afterTurnParams.runtimeContext);
       if (llm && !reusable.summaryFromLlm) {
-        const split = splitPreservedRecentTurns({
+        const split = splitMessagesAtCutPoint({
           messages: afterTurnParams.messages,
-          recentTurnsPreserve: params.config.recentTurnsPreserve,
+          keepRecentTokens: params.config.keepRecentTokens,
+          counter,
         });
         if (split.summarizableMessages.length > 0) {
           try {
@@ -299,8 +304,7 @@ export function createTokenizerThresholdContextEngine(params: {
       model?: string;
       prompt?: string;
     }) {
-      // Prompt path: return native-style [summary user msg] + preserved recent
-      // turns under the local threshold so mid-loop model calls stay bounded.
+      // Prompt path: return [summary user msg] + keepRecentTokens contiguous tail.
       const stateKey = resolveSessionStateKey({
         sessionId: assembleParams.sessionId,
         sessionKey: assembleParams.sessionKey,
@@ -308,14 +312,15 @@ export function createTokenizerThresholdContextEngine(params: {
       const reusable = resolveReusableSummary({
         stateKey,
         messages: assembleParams.messages,
-        recentTurnsPreserve: params.config.recentTurnsPreserve,
+        keepRecentTokens: params.config.keepRecentTokens,
+        counter,
       });
       const computation = computeTokenizerThresholdCompaction({
         messages: assembleParams.messages,
         thresholdTokens: params.config.thresholdTokens,
         counter,
         force: true,
-        recentTurnsPreserve: params.config.recentTurnsPreserve,
+        keepRecentTokens: params.config.keepRecentTokens,
         summaryOverride: reusable.summary,
       });
 
@@ -323,8 +328,6 @@ export function createTokenizerThresholdContextEngine(params: {
         const state: TokenizerThresholdSessionState = {
           compactedSourceLength: assembleParams.messages.length,
           summarizableCount: computation.summarizableCount,
-          // Fingerprint the actual summarizable set (native filter may be
-          // non-contiguous — do not derive it from a contiguous slice).
           summarizableFingerprint: reusable.summarizableFingerprint,
           compactedMessages: computation.messages,
           tokensBefore: computation.tokensBefore,
@@ -380,9 +383,10 @@ export function createTokenizerThresholdContextEngine(params: {
           if (messages) {
             const llm = resolveRuntimeLlm(compactParams.runtimeContext);
             if (llm) {
-              const split = splitPreservedRecentTurns({
+              const split = splitMessagesAtCutPoint({
                 messages,
-                recentTurnsPreserve: params.config.recentTurnsPreserve,
+                keepRecentTokens: params.config.keepRecentTokens,
+                counter,
               });
               if (split.summarizableMessages.length > 0) {
                 const llmSummary = await summarizeWithRuntimeLlm({

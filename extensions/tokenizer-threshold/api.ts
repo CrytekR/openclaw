@@ -1,5 +1,6 @@
 /** Public package surface for the tokenizer-threshold context engine plugin. */
 export {
+  DEFAULT_KEEP_RECENT_TOKENS,
   DEFAULT_THRESHOLD_TOKENS,
   DEFAULT_TOKENIZER_ENCODING,
   resolveTokenizerThresholdConfig,
@@ -12,8 +13,16 @@ export {
 } from "./src/engine.js";
 export {
   computeTokenizerThresholdCompaction,
+  splitMessagesAtCutPoint,
   type EngineCompactComputation,
 } from "./src/compact-logic.js";
+export {
+  findMessageCutPoint,
+  findMessageTurnStartIndex,
+  findValidMessageCutPoints,
+  type MessageCutPoint,
+  type MessageHistorySplit,
+} from "./src/cut-point.js";
 export {
   clearSessionCompactionState,
   getSessionCompactionState,
