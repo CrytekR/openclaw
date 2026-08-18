@@ -102,3 +102,34 @@ export function countMessageTokens(params: {
   }
   return total;
 }
+
+/** Count tokens for a cached system prompt string (0 when missing/blank). */
+export function countSystemPromptTokens(params: {
+  systemPrompt?: string;
+  counter: TokenCounter;
+}): number {
+  const text = params.systemPrompt?.trim();
+  if (!text) {
+    return 0;
+  }
+  // Small framing overhead so system text is not treated cheaper than messages.
+  return params.counter.countText(text) + 4;
+}
+
+/**
+ * Local prompt pressure: session messages plus optional cached system prompt.
+ * Tool JSON schemas are still outside this estimate (not available to the engine).
+ */
+export function countPromptTokens(params: {
+  messages: readonly unknown[];
+  systemPrompt?: string;
+  counter: TokenCounter;
+}): number {
+  return (
+    countMessageTokens({ messages: params.messages, counter: params.counter }) +
+    countSystemPromptTokens({
+      systemPrompt: params.systemPrompt,
+      counter: params.counter,
+    })
+  );
+}

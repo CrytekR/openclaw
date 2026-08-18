@@ -7,7 +7,12 @@ import {
   assembleNativeStyleCompactedMessages,
   type NativeCompactAssembly,
 } from "./native-compact-assemble.js";
-import { countMessageTokens, type TokenCounter } from "./tokenizer.js";
+import {
+  countMessageTokens,
+  countPromptTokens,
+  countSystemPromptTokens,
+  type TokenCounter,
+} from "./tokenizer.js";
 
 export type EngineCompactComputation = NativeCompactAssembly;
 
@@ -19,9 +24,16 @@ export function computeTokenizerThresholdCompaction(params: {
   force?: boolean;
   keepRecentTokens?: number;
   summaryOverride?: string;
+  /** Cached llm_input system prompt; counted toward the threshold gate. */
+  systemPrompt?: string;
 }): EngineCompactComputation {
-  const tokensBefore = countMessageTokens({
+  const systemPromptTokens = countSystemPromptTokens({
+    systemPrompt: params.systemPrompt,
+    counter: params.counter,
+  });
+  const tokensBefore = countPromptTokens({
     messages: params.messages,
+    systemPrompt: params.systemPrompt,
     counter: params.counter,
   });
 
@@ -54,14 +66,29 @@ export function computeTokenizerThresholdCompaction(params: {
     };
   }
 
-  return assembleNativeStyleCompactedMessages({
+  // Leave headroom in the message budget for the cached system prompt so
+  // summary+tail windowing targets (messages + system) ≈ thresholdTokens.
+  const messageThresholdTokens = Math.max(1, params.thresholdTokens - systemPromptTokens);
+  const assembled = assembleNativeStyleCompactedMessages({
     messages: params.messages,
-    thresholdTokens: params.thresholdTokens,
+    thresholdTokens: messageThresholdTokens,
     counter: params.counter,
     keepRecentTokens: params.keepRecentTokens ?? 20_000,
     summaryOverride: params.summaryOverride,
     countMessageTokens: (messages) => countMessageTokens({ messages, counter: params.counter }),
   });
+  if (!assembled.compacted) {
+    return {
+      ...assembled,
+      tokensBefore,
+      tokensAfter: assembled.tokensAfter + systemPromptTokens,
+    };
+  }
+  return {
+    ...assembled,
+    tokensBefore,
+    tokensAfter: assembled.tokensAfter + systemPromptTokens,
+  };
 }
 
 export { splitMessagesAtCutPoint };

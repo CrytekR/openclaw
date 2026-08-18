@@ -1,11 +1,13 @@
 /**
  * Tokenizer-threshold context engine plugin.
  * Owns threshold compaction with agent-core findCutPoint keep-recent tail.
+ * Observes llm_input to cache system prompt tokens for threshold gating.
  */
 import { definePluginEntry } from "openclaw/plugin-sdk/plugin-entry";
 import { Type } from "typebox";
 import { resolveTokenizerThresholdConfig } from "./src/config.js";
 import { createTokenizerThresholdContextEngine } from "./src/engine.js";
+import { rememberSystemPrompt } from "./src/system-prompt-cache.js";
 
 const configSchema = Type.Object(
   {
@@ -34,6 +36,22 @@ export default definePluginEntry({
     const config = resolveTokenizerThresholdConfig(
       (api.pluginConfig ?? {}) as Record<string, unknown>,
     );
+
+    // Context-engine assemble cannot see system prompt text. Cache the
+    // provider-bound system prompt from llm_input so threshold gating can
+    // include those tokens. Non-bundled installs need
+    // plugins.entries.tokenizer-threshold.hooks.allowConversationAccess=true.
+    api.on("llm_input", (event, ctx) => {
+      if (typeof event.systemPrompt !== "string" || !event.systemPrompt.trim()) {
+        return;
+      }
+      rememberSystemPrompt({
+        sessionId: event.sessionId,
+        sessionKey: ctx.sessionKey,
+        systemPrompt: event.systemPrompt,
+      });
+    });
+
     api.registerContextEngine("tokenizer-threshold", () =>
       createTokenizerThresholdContextEngine({ config }),
     );

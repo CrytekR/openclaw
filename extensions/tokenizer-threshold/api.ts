@@ -31,5 +31,16 @@ export {
   setSessionCompactionState,
   type TokenizerThresholdSessionState,
 } from "./src/session-state.js";
-export { countMessageTokens, extractMessageText, type TokenCounter } from "./src/tokenizer.js";
+export {
+  getCachedSystemPrompt,
+  rememberSystemPrompt,
+  resetSystemPromptCacheForTest,
+} from "./src/system-prompt-cache.js";
+export {
+  countMessageTokens,
+  countPromptTokens,
+  countSystemPromptTokens,
+  extractMessageText,
+  type TokenCounter,
+} from "./src/tokenizer.js";
 export { windowMessagesToTokenBudget } from "./src/window.js";

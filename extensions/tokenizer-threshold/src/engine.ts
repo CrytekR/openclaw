@@ -24,7 +24,8 @@ import {
   setSessionCompactionState,
   type TokenizerThresholdSessionState,
 } from "./session-state.js";
-import { countMessageTokens, getLocalTokenCounter, type TokenCounter } from "./tokenizer.js";
+import { getCachedSystemPrompt } from "./system-prompt-cache.js";
+import { countPromptTokens, getLocalTokenCounter, type TokenCounter } from "./tokenizer.js";
 
 type CompactResult = {
   ok: boolean;
@@ -49,15 +50,31 @@ type RuntimeLlm = {
   }) => Promise<{ text: string }>;
 };
 
+function resolveCachedSystemPrompt(params: {
+  sessionId: string;
+  sessionKey?: string;
+}): string | undefined {
+  return getCachedSystemPrompt({
+    sessionId: params.sessionId,
+    sessionKey: params.sessionKey,
+  });
+}
+
 function resolveCurrentTokenCount(params: {
   messages: AgentMessage[];
   counter: TokenCounter;
+  systemPrompt?: string;
 }): number {
-  // Gate on the local tokenizer view of session messages. Host usage snapshots
-  // (runtimeContext.currentTokenCount) can lag, jump after a large tool turn,
-  // or disagree with tiktoken — preferring them delayed compaction far past
-  // the configured threshold.
-  return countMessageTokens({ messages: params.messages, counter: params.counter });
+  // Gate on local tiktoken of messages + cached llm_input system prompt.
+  // Host usage snapshots (runtimeContext.currentTokenCount) can lag, jump after
+  // a large tool turn, or disagree with tiktoken — preferring them delayed
+  // compaction far past the configured threshold. Tool JSON schemas remain
+  // outside this estimate until the host exposes them to the engine.
+  return countPromptTokens({
+    messages: params.messages,
+    systemPrompt: params.systemPrompt,
+    counter: params.counter,
+  });
 }
 
 function resolveRuntimeLlm(runtimeContext?: Record<string, unknown>): RuntimeLlm | undefined {
@@ -153,11 +170,18 @@ export function createTokenizerThresholdContextEngine(params: {
     tokenBudget?: number;
     summaryOverride?: string;
     summaryFromLlm?: boolean;
+    systemPrompt?: string;
   }): CompactResult => {
     const stateKey = resolveSessionStateKey({
       sessionId: compactParams.sessionId,
       sessionKey: compactParams.sessionKey,
     });
+    const systemPrompt =
+      compactParams.systemPrompt ??
+      resolveCachedSystemPrompt({
+        sessionId: compactParams.sessionId,
+        sessionKey: compactParams.sessionKey,
+      });
     const reusable = resolveReusableSummary({
       stateKey,
       messages: compactParams.messages,
@@ -172,6 +196,7 @@ export function createTokenizerThresholdContextEngine(params: {
       force: compactParams.force,
       keepRecentTokens: params.config.keepRecentTokens,
       summaryOverride,
+      systemPrompt,
     });
     if (!computation.compacted) {
       return {
@@ -230,9 +255,14 @@ export function createTokenizerThresholdContextEngine(params: {
       runtimeContext?: Record<string, unknown>;
     }) {
       // Engine-owned view only — no session write lock, safe in tool loops.
+      const systemPrompt = resolveCachedSystemPrompt({
+        sessionId: afterTurnParams.sessionId,
+        sessionKey: afterTurnParams.sessionKey,
+      });
       const currentTokenCount = resolveCurrentTokenCount({
         messages: afterTurnParams.messages,
         counter,
+        systemPrompt,
       });
       if (currentTokenCount < params.config.thresholdTokens) {
         return;
@@ -309,6 +339,10 @@ export function createTokenizerThresholdContextEngine(params: {
         sessionId: assembleParams.sessionId,
         sessionKey: assembleParams.sessionKey,
       });
+      const systemPrompt = resolveCachedSystemPrompt({
+        sessionId: assembleParams.sessionId,
+        sessionKey: assembleParams.sessionKey,
+      });
       const reusable = resolveReusableSummary({
         stateKey,
         messages: assembleParams.messages,
@@ -322,6 +356,7 @@ export function createTokenizerThresholdContextEngine(params: {
         force: true,
         keepRecentTokens: params.config.keepRecentTokens,
         summaryOverride: reusable.summary,
+        systemPrompt,
       });
 
       if (computation.compacted) {

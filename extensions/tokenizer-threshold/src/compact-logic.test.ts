@@ -122,6 +122,35 @@ describe("computeTokenizerThresholdCompaction", () => {
     expect(String(first.content)).toContain(COMPACTION_SUMMARY_PREFIX.trim());
     expect(String(first.content)).toContain(COMPACTION_SUMMARY_SUFFIX.trim());
   });
+
+  it("counts cached system prompt toward the threshold gate", () => {
+    const messages = [
+      { role: "user", content: "word ".repeat(80) },
+      { role: "assistant", content: "word ".repeat(80) },
+      { role: "user", content: "latest" },
+    ];
+    const messageTokens = countMessageTokens({ messages, counter });
+    const withoutSystem = computeTokenizerThresholdCompaction({
+      messages,
+      thresholdTokens: messageTokens + 100,
+      counter,
+      keepRecentTokens: 60,
+    });
+    expect(withoutSystem.compacted).toBe(false);
+
+    const withSystem = computeTokenizerThresholdCompaction({
+      messages,
+      thresholdTokens: messageTokens + 100,
+      counter,
+      keepRecentTokens: 60,
+      systemPrompt: "BOOTSTRAP ".repeat(500),
+    });
+    expect(withSystem.compacted).toBe(true);
+    expect(withSystem.tokensBefore).toBeGreaterThan(messageTokens);
+    expect(withSystem.tokensAfter).toBeGreaterThan(
+      countMessageTokens({ messages: withSystem.messages, counter }),
+    );
+  });
 });
 
 describe("assembleNativeStyleCompactedMessages", () => {

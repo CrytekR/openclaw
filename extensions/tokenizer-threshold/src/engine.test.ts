@@ -15,14 +15,18 @@ vi.mock("openclaw/plugin-sdk/core", async () => {
 import { createTokenizerThresholdContextEngine } from "./engine.js";
 import { COMPACTION_SUMMARY_PREFIX } from "./native-compact-assemble.js";
 import { resetTokenizerThresholdSessionStatesForTest } from "./session-state.js";
+import { rememberSystemPrompt, resetSystemPromptCacheForTest } from "./system-prompt-cache.js";
+import { countMessageTokens, getLocalTokenCounter } from "./tokenizer.js";
 
 describe("createTokenizerThresholdContextEngine", () => {
   beforeEach(() => {
     resetTokenizerThresholdSessionStatesForTest();
+    resetSystemPromptCacheForTest();
   });
 
   afterEach(() => {
     resetTokenizerThresholdSessionStatesForTest();
+    resetSystemPromptCacheForTest();
   });
 
   it("assembles summary + keepRecentTokens tail when over threshold", async () => {
@@ -70,6 +74,63 @@ describe("createTokenizerThresholdContextEngine", () => {
 
     expect(assembled.estimatedTokens).toBeGreaterThan(0);
     expect(assembled.messages).toHaveLength(1);
+  });
+
+  it("gates assemble on messages plus cached llm_input system prompt tokens", async () => {
+    const counter = getLocalTokenCounter("cl100k_base");
+    const messages = [
+      { role: "user", content: "word ".repeat(120) },
+      { role: "assistant", content: "word ".repeat(120) },
+      { role: "user", content: "latest" },
+    ] as const;
+    const messageTokens = countMessageTokens({ messages, counter });
+    const systemPrompt = "SYSTEM_POLICY ".repeat(400);
+    rememberSystemPrompt({
+      sessionId: "s-sys",
+      sessionKey: "agent:main:main",
+      systemPrompt,
+    });
+
+    const underMessageBudget = createTokenizerThresholdContextEngine({
+      config: {
+        thresholdTokens: messageTokens + 10_000,
+        encoding: "cl100k_base",
+        keepRecentTokens: 80,
+      },
+    });
+    const intact = await underMessageBudget.assemble({
+      sessionId: "s-sys",
+      sessionKey: "agent:main:main",
+      messages: [...messages],
+    });
+    expect(intact.messages).toEqual([...messages]);
+
+    const engine = createTokenizerThresholdContextEngine({
+      config: {
+        // Messages alone stay under; messages + cached system cross the gate.
+        thresholdTokens: messageTokens + 50,
+        encoding: "cl100k_base",
+        keepRecentTokens: 80,
+      },
+    });
+    const assembled = await engine.assemble({
+      sessionId: "s-sys",
+      sessionKey: "agent:main:main",
+      messages: [...messages],
+    });
+    expect(assembled.messages).not.toEqual([...messages]);
+    // estimatedTokens includes the cached system prompt, so it can still be
+    // larger than the message-only threshold headroom; it must shrink vs the
+    // pre-compact messages+system total and stay above bare message tokens.
+    expect(assembled.estimatedTokens).toBeLessThan(
+      countMessageTokens({ messages, counter }) + counter.countText(systemPrompt) + 4,
+    );
+    expect(assembled.estimatedTokens).toBeGreaterThan(
+      countMessageTokens({ messages: assembled.messages, counter }),
+    );
+    // With a large cached system prompt the message budget collapses; the
+    // engine may summary-compact or fall back to a trailing window.
+    expect(assembled.messages.length).toBeLessThan(messages.length);
   });
 
   it("compacts inside the engine from afterTurn when over the tokenizer threshold", async () => {
