@@ -1,16 +1,15 @@
 /**
  * Context engine that owns threshold compaction with a local tokenizer.
  *
- * Compaction mirrors agent-core prepareCompaction / findCutPoint:
+ * Compaction happens only in assemble() (prompt path / mid-loop):
  *   [user message wrapping <summary>...</summary>] + keepRecentTokens contiguous tail
  *
- * - assemble() returns that compacted message list under the local threshold
- *   (extractive summary when no LLM summary is cached yet)
- * - afterTurn() refreshes the engine-owned view and optionally upgrades the
- *   summary via runtimeContext.llm when available
- * - compact() returns CompactResult.tokensBefore/tokensAfter for host checkpoints
+ * When over threshold, assemble prefers api.runtime.llm.complete for the summary
+ * (injected at plugin register), then falls back to extractive text.
  *
- * No runtime delegate / session write lock — safe inside live tool loops.
+ * afterTurn is intentionally a no-op — no compaction work there.
+ * compact() reuses the assemble-built in-memory view for host checkpoints, or
+ * can compact an explicit runtimeContext.messages list (same LLM resolver).
  */
 import type { AgentMessage } from "openclaw/plugin-sdk/agent-harness-runtime";
 import { buildMemorySystemPromptAddition } from "openclaw/plugin-sdk/core";
@@ -39,16 +38,14 @@ type CompactResult = {
   };
 };
 
-type RuntimeLlm = {
-  complete: (params: {
-    messages: Array<{ role: "system" | "user" | "assistant"; content: string }>;
-    maxTokens?: number;
-    temperature?: number;
-    systemPrompt?: string;
-    purpose?: string;
-    signal?: AbortSignal;
-  }) => Promise<{ text: string }>;
-};
+export type RuntimeLlmComplete = (params: {
+  messages: Array<{ role: "system" | "user" | "assistant"; content: string }>;
+  maxTokens?: number;
+  temperature?: number;
+  systemPrompt?: string;
+  purpose?: string;
+  signal?: AbortSignal;
+}) => Promise<{ text: string }>;
 
 function resolveCachedSystemPrompt(params: {
   sessionId: string;
@@ -58,32 +55,6 @@ function resolveCachedSystemPrompt(params: {
     sessionId: params.sessionId,
     sessionKey: params.sessionKey,
   });
-}
-
-function resolveCurrentTokenCount(params: {
-  messages: AgentMessage[];
-  counter: TokenCounter;
-  systemPrompt?: string;
-}): number {
-  // Gate on local tiktoken of messages + cached llm_input system prompt.
-  // Host usage snapshots (runtimeContext.currentTokenCount) can lag, jump after
-  // a large tool turn, or disagree with tiktoken — preferring them delayed
-  // compaction far past the configured threshold. Tool JSON schemas remain
-  // outside this estimate until the host exposes them to the engine.
-  return countPromptTokens({
-    messages: params.messages,
-    systemPrompt: params.systemPrompt,
-    counter: params.counter,
-  });
-}
-
-function resolveRuntimeLlm(runtimeContext?: Record<string, unknown>): RuntimeLlm | undefined {
-  const llm = runtimeContext?.llm;
-  if (!llm || typeof llm !== "object") {
-    return undefined;
-  }
-  const complete = (llm as { complete?: unknown }).complete;
-  return typeof complete === "function" ? (llm as RuntimeLlm) : undefined;
 }
 
 /** Build the checkpoint trigger snapshot for plugin-owned threshold compaction. */
@@ -156,8 +127,54 @@ function resolveReusableSummary(params: {
   return { summaryFromLlm: false, summarizableFingerprint };
 }
 
+async function resolveSummaryForCompaction(params: {
+  messages: AgentMessage[];
+  keepRecentTokens: number;
+  counter: TokenCounter;
+  reusable: { summary?: string; summaryFromLlm: boolean };
+  llmComplete?: RuntimeLlmComplete;
+  signal?: AbortSignal;
+}): Promise<{ summary?: string; summaryFromLlm: boolean }> {
+  if (params.reusable.summaryFromLlm && params.reusable.summary?.trim()) {
+    return {
+      summary: params.reusable.summary,
+      summaryFromLlm: true,
+    };
+  }
+
+  const llmComplete = params.llmComplete;
+  if (llmComplete) {
+    const split = splitMessagesAtCutPoint({
+      messages: params.messages,
+      keepRecentTokens: params.keepRecentTokens,
+      counter: params.counter,
+    });
+    if (split.summarizableMessages.length > 0) {
+      const llmSummary = await summarizeWithRuntimeLlm({
+        messages: split.summarizableMessages,
+        llmComplete,
+        previousSummary: params.reusable.summary,
+        signal: params.signal,
+      });
+      if (llmSummary?.trim()) {
+        return { summary: llmSummary, summaryFromLlm: true };
+      }
+    }
+  }
+
+  return {
+    summary: params.reusable.summary,
+    summaryFromLlm: params.reusable.summaryFromLlm,
+  };
+}
+
 export function createTokenizerThresholdContextEngine(params: {
   config: TokenizerThresholdConfig;
+  /**
+   * Lazy resolver for api.runtime.llm.complete. Invoked from assemble/compact
+   * so the runtime facade can be ready after plugin register.
+   */
+  resolveLlmComplete?: () => RuntimeLlmComplete | undefined;
 }) {
   const counter = getLocalTokenCounter(params.config.encoding);
   let compactInFlight: Promise<CompactResult> | null = null;
@@ -213,7 +230,6 @@ export function createTokenizerThresholdContextEngine(params: {
     const state: TokenizerThresholdSessionState = {
       compactedSourceLength: compactParams.messages.length,
       summarizableCount: computation.summarizableCount,
-      // Fingerprint the actual summarizable set (may be non-contiguous).
       summarizableFingerprint: reusable.summarizableFingerprint,
       compactedMessages: computation.messages,
       tokensBefore: computation.tokensBefore,
@@ -245,7 +261,7 @@ export function createTokenizerThresholdContextEngine(params: {
       return { ingested: true };
     },
 
-    async afterTurn(afterTurnParams: {
+    async afterTurn(_afterTurnParams: {
       sessionId: string;
       sessionKey?: string;
       sessionFile: string;
@@ -254,74 +270,9 @@ export function createTokenizerThresholdContextEngine(params: {
       tokenBudget?: number;
       runtimeContext?: Record<string, unknown>;
     }) {
-      // Engine-owned view only — no session write lock, safe in tool loops.
-      const systemPrompt = resolveCachedSystemPrompt({
-        sessionId: afterTurnParams.sessionId,
-        sessionKey: afterTurnParams.sessionKey,
-      });
-      const currentTokenCount = resolveCurrentTokenCount({
-        messages: afterTurnParams.messages,
-        counter,
-        systemPrompt,
-      });
-      if (currentTokenCount < params.config.thresholdTokens) {
-        return;
-      }
-
-      const stateKey = resolveSessionStateKey({
-        sessionId: afterTurnParams.sessionId,
-        sessionKey: afterTurnParams.sessionKey,
-      });
-      const reusable = resolveReusableSummary({
-        stateKey,
-        messages: afterTurnParams.messages,
-        keepRecentTokens: params.config.keepRecentTokens,
-        counter,
-      });
-
-      // Prefer LLM summary when the host provided runtimeContext.llm and we do
-      // not already have a matching LLM-backed summary for this prefix.
-      const llm = resolveRuntimeLlm(afterTurnParams.runtimeContext);
-      if (llm && !reusable.summaryFromLlm) {
-        const split = splitMessagesAtCutPoint({
-          messages: afterTurnParams.messages,
-          keepRecentTokens: params.config.keepRecentTokens,
-          counter,
-        });
-        if (split.summarizableMessages.length > 0) {
-          try {
-            const llmSummary = await summarizeWithRuntimeLlm({
-              messages: split.summarizableMessages,
-              llmComplete: (request) => llm.complete(request),
-              previousSummary: reusable.summary,
-            });
-            if (llmSummary?.trim()) {
-              runEngineCompaction({
-                sessionId: afterTurnParams.sessionId,
-                sessionKey: afterTurnParams.sessionKey,
-                messages: afterTurnParams.messages,
-                force: true,
-                tokenBudget: afterTurnParams.tokenBudget,
-                summaryOverride: llmSummary,
-                summaryFromLlm: true,
-              });
-              return;
-            }
-          } catch {
-            // Fall through to extractive compact — never break the tool loop.
-          }
-        }
-      }
-
-      runEngineCompaction({
-        sessionId: afterTurnParams.sessionId,
-        sessionKey: afterTurnParams.sessionKey,
-        messages: afterTurnParams.messages,
-        force: true,
-        tokenBudget: afterTurnParams.tokenBudget,
-        summaryOverride: reusable.summary,
-        summaryFromLlm: reusable.summaryFromLlm,
-      });
+      // Compaction is assemble-only. Mid-loop and turn-start assemble check the
+      // threshold and shrink the next prompt; afterTurn must not duplicate work
+      // or race the live tool loop with a second LLM summary.
     },
 
     async assemble(assembleParams: {
@@ -334,7 +285,6 @@ export function createTokenizerThresholdContextEngine(params: {
       model?: string;
       prompt?: string;
     }) {
-      // Prompt path: return [summary user msg] + keepRecentTokens contiguous tail.
       const stateKey = resolveSessionStateKey({
         sessionId: assembleParams.sessionId,
         sessionKey: assembleParams.sessionKey,
@@ -343,11 +293,36 @@ export function createTokenizerThresholdContextEngine(params: {
         sessionId: assembleParams.sessionId,
         sessionKey: assembleParams.sessionKey,
       });
+      const tokensBefore = countPromptTokens({
+        messages: assembleParams.messages,
+        systemPrompt,
+        counter,
+      });
+
+      // Under budget: leave the prompt untouched.
+      if (tokensBefore < params.config.thresholdTokens) {
+        return {
+          messages: assembleParams.messages,
+          estimatedTokens: tokensBefore,
+          systemPromptAddition: buildMemorySystemPromptAddition({
+            availableTools: assembleParams.availableTools ?? new Set(),
+            citationsMode: assembleParams.citationsMode,
+          }),
+        };
+      }
+
       const reusable = resolveReusableSummary({
         stateKey,
         messages: assembleParams.messages,
         keepRecentTokens: params.config.keepRecentTokens,
         counter,
+      });
+      const resolved = await resolveSummaryForCompaction({
+        messages: assembleParams.messages,
+        keepRecentTokens: params.config.keepRecentTokens,
+        counter,
+        reusable,
+        llmComplete: params.resolveLlmComplete?.(),
       });
       const computation = computeTokenizerThresholdCompaction({
         messages: assembleParams.messages,
@@ -355,7 +330,7 @@ export function createTokenizerThresholdContextEngine(params: {
         counter,
         force: true,
         keepRecentTokens: params.config.keepRecentTokens,
-        summaryOverride: reusable.summary,
+        summaryOverride: resolved.summary,
         systemPrompt,
       });
 
@@ -369,7 +344,7 @@ export function createTokenizerThresholdContextEngine(params: {
           tokensAfter: computation.tokensAfter,
           summary: computation.summary,
           summaryFromLlm: Boolean(
-            reusable.summary && reusable.summary === computation.summary && reusable.summaryFromLlm,
+            resolved.summaryFromLlm && resolved.summary && resolved.summary === computation.summary,
           ),
         };
         setSessionCompactionState(stateKey, state);
@@ -416,44 +391,38 @@ export function createTokenizerThresholdContextEngine(params: {
           }
 
           if (messages) {
-            const llm = resolveRuntimeLlm(compactParams.runtimeContext);
-            if (llm) {
-              const split = splitMessagesAtCutPoint({
-                messages,
-                keepRecentTokens: params.config.keepRecentTokens,
-                counter,
-              });
-              if (split.summarizableMessages.length > 0) {
-                const llmSummary = await summarizeWithRuntimeLlm({
-                  messages: split.summarizableMessages,
-                  llmComplete: (request) => llm.complete(request),
-                  signal: compactParams.abortSignal,
-                });
-                if (llmSummary?.trim()) {
-                  return runEngineCompaction({
-                    sessionId: compactParams.sessionId,
-                    sessionKey: compactParams.sessionKey,
-                    messages,
-                    force: compactParams.force ?? true,
-                    tokenBudget: compactParams.tokenBudget,
-                    summaryOverride: llmSummary,
-                    summaryFromLlm: true,
-                  });
-                }
-              }
-            }
+            const stateKey = resolveSessionStateKey({
+              sessionId: compactParams.sessionId,
+              sessionKey: compactParams.sessionKey,
+            });
+            const reusable = resolveReusableSummary({
+              stateKey,
+              messages,
+              keepRecentTokens: params.config.keepRecentTokens,
+              counter,
+            });
+            const resolved = await resolveSummaryForCompaction({
+              messages,
+              keepRecentTokens: params.config.keepRecentTokens,
+              counter,
+              reusable,
+              llmComplete: params.resolveLlmComplete?.(),
+              signal: compactParams.abortSignal,
+            });
             return runEngineCompaction({
               sessionId: compactParams.sessionId,
               sessionKey: compactParams.sessionKey,
               messages,
               force: compactParams.force ?? true,
               tokenBudget: compactParams.tokenBudget,
+              summaryOverride: resolved.summary,
+              summaryFromLlm: resolved.summaryFromLlm,
             });
           }
 
           // Host overflow/`/compact` often omit the live message list. Reuse the
-          // engine view prepared by assemble/afterTurn so CompactResult counts
-          // still reach host checkpoint persistence.
+          // engine view prepared by assemble so CompactResult counts still reach
+          // host checkpoint persistence.
           const stateKey = resolveSessionStateKey({
             sessionId: compactParams.sessionId,
             sessionKey: compactParams.sessionKey,

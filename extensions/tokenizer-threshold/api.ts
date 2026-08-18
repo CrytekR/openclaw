@@ -10,6 +10,7 @@ export {
 export {
   buildContextEngineCheckpointTrigger,
   createTokenizerThresholdContextEngine,
+  type RuntimeLlmComplete,
 } from "./src/engine.js";
 export {
   computeTokenizerThresholdCompaction,

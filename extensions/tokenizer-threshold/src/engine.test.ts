@@ -107,7 +107,6 @@ describe("createTokenizerThresholdContextEngine", () => {
 
     const engine = createTokenizerThresholdContextEngine({
       config: {
-        // Messages alone stay under; messages + cached system cross the gate.
         thresholdTokens: messageTokens + 50,
         encoding: "cl100k_base",
         keepRecentTokens: 80,
@@ -119,21 +118,92 @@ describe("createTokenizerThresholdContextEngine", () => {
       messages: [...messages],
     });
     expect(assembled.messages).not.toEqual([...messages]);
-    // estimatedTokens includes the cached system prompt, so it can still be
-    // larger than the message-only threshold headroom; it must shrink vs the
-    // pre-compact messages+system total and stay above bare message tokens.
     expect(assembled.estimatedTokens).toBeLessThan(
       countMessageTokens({ messages, counter }) + counter.countText(systemPrompt) + 4,
     );
     expect(assembled.estimatedTokens).toBeGreaterThan(
       countMessageTokens({ messages: assembled.messages, counter }),
     );
-    // With a large cached system prompt the message budget collapses; the
-    // engine may summary-compact or fall back to a trailing window.
     expect(assembled.messages.length).toBeLessThan(messages.length);
   });
 
-  it("compacts inside the engine from afterTurn when over the tokenizer threshold", async () => {
+  it("uses api.runtime.llm.complete from assemble when over threshold", async () => {
+    const complete = vi.fn(async () => ({ text: "LLM distilled earlier context" }));
+    const engine = createTokenizerThresholdContextEngine({
+      config: {
+        thresholdTokens: 200,
+        encoding: "cl100k_base",
+        keepRecentTokens: 80,
+      },
+      resolveLlmComplete: () => complete,
+    });
+    const messages = [
+      { role: "user", content: "word ".repeat(2_000) },
+      { role: "assistant", content: "word ".repeat(2_000) },
+      { role: "user", content: "latest" },
+    ];
+
+    const assembled = await engine.assemble({
+      sessionId: "s1",
+      messages,
+    });
+
+    expect(complete).toHaveBeenCalled();
+    expect(String((assembled.messages[0] as { content?: string }).content)).toContain(
+      "LLM distilled earlier context",
+    );
+
+    const compactResult = await engine.compact({
+      sessionId: "s1",
+      sessionFile: "/tmp/session.jsonl",
+      force: true,
+    });
+    expect(compactResult.result?.summary).toBe("LLM distilled earlier context");
+    expect(compactResult.result?.details).toMatchObject({ summaryFromLlm: true });
+  });
+
+  it("leaves afterTurn as a no-op (compaction is assemble-only)", async () => {
+    const engine = createTokenizerThresholdContextEngine({
+      config: {
+        thresholdTokens: 200,
+        encoding: "cl100k_base",
+        keepRecentTokens: 80,
+      },
+    });
+    const messages = [
+      { role: "user", content: "word ".repeat(2_000) },
+      { role: "assistant", content: "word ".repeat(2_000) },
+      { role: "user", content: "latest" },
+    ];
+
+    await engine.afterTurn?.({
+      sessionId: "s1",
+      sessionKey: "agent:main:main",
+      sessionFile: "/tmp/session.jsonl",
+      messages,
+      prePromptMessageCount: 0,
+      tokenBudget: 128_000,
+      runtimeContext: {
+        llm: {
+          complete: async () => ({ text: "should not run from afterTurn" }),
+        },
+      },
+    });
+
+    const compactResult = await engine.compact({
+      sessionId: "s1",
+      sessionKey: "agent:main:main",
+      sessionFile: "/tmp/session.jsonl",
+      force: true,
+    });
+    expect(compactResult).toMatchObject({
+      ok: true,
+      compacted: false,
+      reason: "no messages available for engine compaction",
+    });
+  });
+
+  it("persists assemble compaction into compact() checkpoint fields", async () => {
     const engine = createTokenizerThresholdContextEngine({
       config: {
         thresholdTokens: 200,
@@ -147,13 +217,10 @@ describe("createTokenizerThresholdContextEngine", () => {
       { role: "user", content: "latest" },
     ] as const;
 
-    await engine.afterTurn?.({
+    await engine.assemble({
       sessionId: "s1",
       sessionKey: "agent:main:main",
-      sessionFile: "/tmp/session.jsonl",
       messages: [...messages],
-      prePromptMessageCount: 0,
-      tokenBudget: 128_000,
     });
 
     const compactResult = await engine.compact({
@@ -187,88 +254,6 @@ describe("createTokenizerThresholdContextEngine", () => {
     );
   });
 
-  it("does not compact from afterTurn when under the threshold", async () => {
-    const engine = createTokenizerThresholdContextEngine({
-      config: {
-        thresholdTokens: 113_000,
-        encoding: "cl100k_base",
-        keepRecentTokens: 20_000,
-      },
-    });
-
-    await engine.afterTurn?.({
-      sessionId: "s1",
-      sessionFile: "/tmp/session.jsonl",
-      messages: [{ role: "user", content: "short" }],
-      prePromptMessageCount: 0,
-    });
-
-    const compactResult = await engine.compact({
-      sessionId: "s1",
-      sessionFile: "/tmp/session.jsonl",
-      force: true,
-    });
-    expect(compactResult).toMatchObject({
-      ok: true,
-      compacted: false,
-      reason: "no messages available for engine compaction",
-    });
-  });
-
-  it("gates afterTurn compaction on local tokenizer count, not host usage", async () => {
-    const engine = createTokenizerThresholdContextEngine({
-      config: {
-        thresholdTokens: 200,
-        encoding: "cl100k_base",
-        keepRecentTokens: 80,
-      },
-    });
-
-    await engine.afterTurn?.({
-      sessionId: "s1",
-      sessionFile: "/tmp/session.jsonl",
-      messages: [{ role: "user", content: "short" }],
-      prePromptMessageCount: 0,
-      runtimeContext: { currentTokenCount: 250 },
-    });
-    expect(
-      (
-        await engine.compact({
-          sessionId: "s1",
-          sessionFile: "/tmp/session.jsonl",
-          force: true,
-        })
-      ).compacted,
-    ).toBe(false);
-
-    await engine.afterTurn?.({
-      sessionId: "s1",
-      sessionFile: "/tmp/session.jsonl",
-      messages: [
-        { role: "user", content: "word ".repeat(2_000) },
-        { role: "assistant", content: "word ".repeat(2_000) },
-      ],
-      prePromptMessageCount: 0,
-      runtimeContext: { currentTokenCount: 50 },
-    });
-
-    const compactResult = await engine.compact({
-      sessionId: "s1",
-      sessionFile: "/tmp/session.jsonl",
-      force: true,
-    });
-    expect(compactResult.compacted).toBe(true);
-    expect(compactResult.result?.tokensBefore).toBeGreaterThan(200);
-    expect(compactResult.result?.details).toMatchObject({
-      checkpointTrigger: {
-        path: "context_engine",
-        trigger: "threshold",
-        projectedTokens: compactResult.result?.tokensBefore,
-        thresholdTokens: 200,
-      },
-    });
-  });
-
   it("compacts from explicit runtimeContext messages without delegating", async () => {
     const engine = createTokenizerThresholdContextEngine({
       config: {
@@ -295,48 +280,5 @@ describe("createTokenizerThresholdContextEngine", () => {
     expect(compactResult.result?.tokensAfter).toBeLessThan(
       compactResult.result?.tokensBefore ?? Number.POSITIVE_INFINITY,
     );
-  });
-
-  it("upgrades extractive summary via runtimeContext.llm in afterTurn", async () => {
-    const engine = createTokenizerThresholdContextEngine({
-      config: {
-        thresholdTokens: 200,
-        encoding: "cl100k_base",
-        keepRecentTokens: 80,
-      },
-    });
-    const messages = [
-      { role: "user", content: "word ".repeat(2_000) },
-      { role: "assistant", content: "word ".repeat(2_000) },
-      { role: "user", content: "latest" },
-    ];
-
-    await engine.afterTurn?.({
-      sessionId: "s1",
-      sessionFile: "/tmp/session.jsonl",
-      messages,
-      prePromptMessageCount: 0,
-      runtimeContext: {
-        llm: {
-          complete: async () => ({ text: "LLM distilled earlier context" }),
-        },
-      },
-    });
-
-    const assembled = await engine.assemble({
-      sessionId: "s1",
-      messages,
-    });
-    expect(String((assembled.messages[0] as { content?: string }).content)).toContain(
-      "LLM distilled earlier context",
-    );
-
-    const compactResult = await engine.compact({
-      sessionId: "s1",
-      sessionFile: "/tmp/session.jsonl",
-      force: true,
-    });
-    expect(compactResult.result?.summary).toBe("LLM distilled earlier context");
-    expect(compactResult.result?.details).toMatchObject({ summaryFromLlm: true });
   });
 });

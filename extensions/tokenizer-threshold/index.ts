@@ -1,6 +1,7 @@
 /**
  * Tokenizer-threshold context engine plugin.
  * Owns threshold compaction with agent-core findCutPoint keep-recent tail.
+ * Compacts only in assemble via api.runtime.llm.complete (+ extractive fallback).
  * Observes llm_input to cache system prompt tokens for threshold gating.
  */
 import { definePluginEntry } from "openclaw/plugin-sdk/plugin-entry";
@@ -29,7 +30,7 @@ export default definePluginEntry({
   id: "tokenizer-threshold",
   name: "Tokenizer Threshold Context Engine",
   description:
-    "Own threshold compaction with findCutPoint keep-recent tail (default 113k / 20k) and report token counts to host checkpoints.",
+    "Own threshold compaction in assemble with findCutPoint keep-recent tail (default 113k / 20k) via api.runtime.llm.complete.",
   kind: "context-engine",
   configSchema,
   register(api) {
@@ -53,7 +54,17 @@ export default definePluginEntry({
     });
 
     api.registerContextEngine("tokenizer-threshold", () =>
-      createTokenizerThresholdContextEngine({ config }),
+      createTokenizerThresholdContextEngine({
+        config,
+        // Lazy: runtime.llm may be wired after register; resolve at assemble time.
+        resolveLlmComplete: () => {
+          const complete = api.runtime?.llm?.complete;
+          if (typeof complete !== "function") {
+            return undefined;
+          }
+          return (request) => complete.call(api.runtime.llm, request);
+        },
+      }),
     );
   },
 });

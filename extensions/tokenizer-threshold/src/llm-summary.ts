@@ -1,5 +1,5 @@
 /**
- * Optional LLM summary upgrade for afterTurn when runtimeContext.llm is present.
+ * Optional LLM summary for assemble/compact via api.runtime.llm.complete.
  */
 import type { AgentMessage } from "openclaw/plugin-sdk/agent-harness-runtime";
 import { extractMessageText } from "./tokenizer.js";
