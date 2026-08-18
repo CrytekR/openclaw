@@ -1,15 +1,16 @@
 import { describe, expect, it } from "vitest";
 import { computeTokenizerThresholdCompaction } from "./compact-logic.js";
+import { resolveTokenizerThresholdConfig } from "./config.js";
 import { findMessageCutPoint, splitMessagesAtCutPoint } from "./cut-point.js";
 import {
   COMPACTION_SUMMARY_PREFIX,
   COMPACTION_SUMMARY_SUFFIX,
   assembleNativeStyleCompactedMessages,
 } from "./native-compact-assemble.js";
-import { getLocalTokenCounter, countMessageTokens } from "./tokenizer.js";
+import { createTokenCounter, countMessageTokens } from "./tokenizer.js";
 
 describe("findMessageCutPoint", () => {
-  const counter = getLocalTokenCounter("cl100k_base");
+  const counter = createTokenCounter(resolveTokenizerThresholdConfig({}));
 
   it("keeps a contiguous recent token budget and never cuts on toolResult", () => {
     const messages: Array<Record<string, unknown>> = [{ role: "user", content: "task start" }];
@@ -89,7 +90,7 @@ describe("findMessageCutPoint", () => {
 });
 
 describe("computeTokenizerThresholdCompaction", () => {
-  const counter = getLocalTokenCounter("cl100k_base");
+  const counter = createTokenCounter(resolveTokenizerThresholdConfig({}));
 
   it("returns below-threshold without compacting", () => {
     const result = computeTokenizerThresholdCompaction({
@@ -154,7 +155,7 @@ describe("computeTokenizerThresholdCompaction", () => {
 });
 
 describe("assembleNativeStyleCompactedMessages", () => {
-  const counter = getLocalTokenCounter("cl100k_base");
+  const counter = createTokenCounter(resolveTokenizerThresholdConfig({}));
 
   it("reuses summaryOverride instead of rebuilding extractive text", () => {
     const messages = [

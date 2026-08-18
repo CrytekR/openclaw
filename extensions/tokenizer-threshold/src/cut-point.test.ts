@@ -1,13 +1,14 @@
 import { describe, expect, it } from "vitest";
+import { resolveTokenizerThresholdConfig } from "./config.js";
 import {
   findMessageCutPoint,
   findValidMessageCutPoints,
   splitMessagesAtCutPoint,
 } from "./cut-point.js";
-import { getLocalTokenCounter } from "./tokenizer.js";
+import { createTokenCounter } from "./tokenizer.js";
 
 describe("cut-point helpers", () => {
-  const counter = getLocalTokenCounter("cl100k_base");
+  const counter = createTokenCounter(resolveTokenizerThresholdConfig({}));
 
   it("lists valid cut points excluding toolResult", () => {
     const messages = [

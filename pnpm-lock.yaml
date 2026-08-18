@@ -1575,9 +1575,6 @@ importers:
 
   extensions/tokenizer-threshold:
     dependencies:
-      js-tiktoken:
-        specifier: 1.0.21
-        version: 1.0.21
       typebox:
         specifier: 1.1.39
         version: 1.1.39
@@ -5752,9 +5749,6 @@ packages:
 
   js-stringify@1.0.2:
     resolution: {integrity: sha512-rtS5ATOo2Q5k1G+DADISilDA6lv79zIiwFd6CcjuIxGKLFm5C+RLImRscVap9k55i+MOZwgliw+NejvkLuGD5g==}
-
-  js-tiktoken@1.0.21:
-    resolution: {integrity: sha512-biOj/6M5qdgx5TKjDnFT1ymSpM5tbd3ylwDtrQvFQSu0Z7bBYko2dF+W/aUkXUPuk6IVpRxk/3Q2sHOzGlS36g==}
 
   js-tokens@10.0.0:
     resolution: {integrity: sha512-lM/UBzQmfJRo9ABXbPWemivdCW8V2G8FHaHdypQaIy523snUjog0W71ayWXTjiR+ixeMyVHN2XcpnTd/liPg/Q==}
@@ -11714,10 +11708,6 @@ snapshots:
   jose@6.2.3: {}
 
   js-stringify@1.0.2: {}
-
-  js-tiktoken@1.0.21:
-    dependencies:
-      base64-js: 1.5.1
 
   js-tokens@10.0.0: {}
 

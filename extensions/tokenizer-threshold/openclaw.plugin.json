@@ -5,15 +5,19 @@
   },
   "kind": "context-engine",
   "name": "Tokenizer Threshold Context Engine",
-  "description": "Own threshold compaction with agent-core findCutPoint keep-recent tail (default 113k / 20k); report tokensBefore/tokensAfter to host checkpoints.",
+  "description": "Own threshold compaction with agent-core findCutPoint keep-recent tail (default 113k / 20k); Python transformers tokenizer (DeepSeek-V4-Flash); report tokensBefore/tokensAfter to host checkpoints.",
   "uiHints": {
     "thresholdTokens": {
       "label": "Compaction threshold (tokens)",
       "help": "When local tokenizer counts reach this value, assemble returns a summary message plus a keepRecentTokens verbatim tail under the budget."
     },
-    "encoding": {
-      "label": "Tiktoken encoding",
-      "help": "Local encoding loaded by js-tiktoken (default cl100k_base)."
+    "tokenizerModel": {
+      "label": "Hugging Face tokenizer model",
+      "help": "Model id loaded by Python transformers AutoTokenizer (default deepseek-ai/DeepSeek-V4-Flash). Alias: deepseek-v4-flash."
+    },
+    "pythonPath": {
+      "label": "Python executable",
+      "help": "Python used to run the persistent transformers token-counter worker (default python3)."
     },
     "keepRecentTokens": {
       "label": "Keep recent tokens",
@@ -29,10 +33,15 @@
         "minimum": 1,
         "default": 113000
       },
-      "encoding": {
+      "tokenizerModel": {
         "type": "string",
-        "enum": ["cl100k_base", "o200k_base", "p50k_base", "r50k_base"],
-        "default": "cl100k_base"
+        "minLength": 1,
+        "default": "deepseek-ai/DeepSeek-V4-Flash"
+      },
+      "pythonPath": {
+        "type": "string",
+        "minLength": 1,
+        "default": "python3"
       },
       "keepRecentTokens": {
         "type": "integer",

@@ -2,10 +2,9 @@
   "name": "@openclaw/tokenizer-threshold",
   "version": "2026.6.6",
   "private": true,
-  "description": "Context engine that counts tokens with a local tiktoken encoding and compacts at a fixed threshold",
+  "description": "Context engine that counts tokens with Python transformers (DeepSeek-V4-Flash) and compacts at a fixed threshold",
   "type": "module",
   "dependencies": {
-    "js-tiktoken": "1.0.21",
     "typebox": "1.1.39"
   },
   "devDependencies": {

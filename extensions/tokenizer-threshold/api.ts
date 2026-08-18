@@ -1,11 +1,11 @@
 /** Public package surface for the tokenizer-threshold context engine plugin. */
 export {
   DEFAULT_KEEP_RECENT_TOKENS,
+  DEFAULT_PYTHON_PATH,
   DEFAULT_THRESHOLD_TOKENS,
-  DEFAULT_TOKENIZER_ENCODING,
+  DEFAULT_TOKENIZER_MODEL,
   resolveTokenizerThresholdConfig,
   type TokenizerThresholdConfig,
-  type TokenizerThresholdEncoding,
 } from "./src/config.js";
 export {
   buildContextEngineCheckpointTrigger,
@@ -41,7 +41,10 @@ export {
   countMessageTokens,
   countPromptTokens,
   countSystemPromptTokens,
+  createTokenCounter,
+  disposeTokenizerWorkers,
   extractMessageText,
+  getLocalTokenCounter,
   type TokenCounter,
 } from "./src/tokenizer.js";
 export { windowMessagesToTokenBudget } from "./src/window.js";

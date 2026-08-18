@@ -1,9 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { getLocalTokenCounter } from "./tokenizer.js";
+import { resolveTokenizerThresholdConfig } from "./config.js";
+import { createTokenCounter } from "./tokenizer.js";
 import { windowMessagesToTokenBudget } from "./window.js";
 
 describe("windowMessagesToTokenBudget", () => {
-  const counter = getLocalTokenCounter("cl100k_base");
+  const counter = createTokenCounter(resolveTokenizerThresholdConfig({}));
 
   it("returns the full list when under the threshold", () => {
     const messages = [

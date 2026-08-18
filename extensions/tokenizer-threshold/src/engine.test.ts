@@ -12,11 +12,12 @@ vi.mock("openclaw/plugin-sdk/core", async () => {
   };
 });
 
+import { resolveTokenizerThresholdConfig } from "./config.js";
 import { createTokenizerThresholdContextEngine } from "./engine.js";
 import { COMPACTION_SUMMARY_PREFIX } from "./native-compact-assemble.js";
 import { resetTokenizerThresholdSessionStatesForTest } from "./session-state.js";
 import { rememberSystemPrompt, resetSystemPromptCacheForTest } from "./system-prompt-cache.js";
-import { countMessageTokens, getLocalTokenCounter } from "./tokenizer.js";
+import { countMessageTokens, createTokenCounter } from "./tokenizer.js";
 
 describe("createTokenizerThresholdContextEngine", () => {
   beforeEach(() => {
@@ -33,7 +34,8 @@ describe("createTokenizerThresholdContextEngine", () => {
     const engine = createTokenizerThresholdContextEngine({
       config: {
         thresholdTokens: 200,
-        encoding: "cl100k_base",
+        tokenizerModel: "deepseek-ai/DeepSeek-V4-Flash",
+        pythonPath: "python3",
         keepRecentTokens: 80,
       },
     });
@@ -62,7 +64,8 @@ describe("createTokenizerThresholdContextEngine", () => {
     const engine = createTokenizerThresholdContextEngine({
       config: {
         thresholdTokens: 113_000,
-        encoding: "cl100k_base",
+        tokenizerModel: "deepseek-ai/DeepSeek-V4-Flash",
+        pythonPath: "python3",
         keepRecentTokens: 20_000,
       },
     });
@@ -77,7 +80,7 @@ describe("createTokenizerThresholdContextEngine", () => {
   });
 
   it("gates assemble on messages plus cached llm_input system prompt tokens", async () => {
-    const counter = getLocalTokenCounter("cl100k_base");
+    const counter = createTokenCounter(resolveTokenizerThresholdConfig({}));
     const messages = [
       { role: "user", content: "word ".repeat(120) },
       { role: "assistant", content: "word ".repeat(120) },
@@ -94,7 +97,8 @@ describe("createTokenizerThresholdContextEngine", () => {
     const underMessageBudget = createTokenizerThresholdContextEngine({
       config: {
         thresholdTokens: messageTokens + 10_000,
-        encoding: "cl100k_base",
+        tokenizerModel: "deepseek-ai/DeepSeek-V4-Flash",
+        pythonPath: "python3",
         keepRecentTokens: 80,
       },
     });
@@ -108,7 +112,8 @@ describe("createTokenizerThresholdContextEngine", () => {
     const engine = createTokenizerThresholdContextEngine({
       config: {
         thresholdTokens: messageTokens + 50,
-        encoding: "cl100k_base",
+        tokenizerModel: "deepseek-ai/DeepSeek-V4-Flash",
+        pythonPath: "python3",
         keepRecentTokens: 80,
       },
     });
@@ -132,7 +137,8 @@ describe("createTokenizerThresholdContextEngine", () => {
     const engine = createTokenizerThresholdContextEngine({
       config: {
         thresholdTokens: 200,
-        encoding: "cl100k_base",
+        tokenizerModel: "deepseek-ai/DeepSeek-V4-Flash",
+        pythonPath: "python3",
         keepRecentTokens: 80,
       },
       resolveLlmComplete: () => complete,
@@ -166,7 +172,8 @@ describe("createTokenizerThresholdContextEngine", () => {
     const engine = createTokenizerThresholdContextEngine({
       config: {
         thresholdTokens: 200,
-        encoding: "cl100k_base",
+        tokenizerModel: "deepseek-ai/DeepSeek-V4-Flash",
+        pythonPath: "python3",
         keepRecentTokens: 80,
       },
     });
@@ -207,7 +214,8 @@ describe("createTokenizerThresholdContextEngine", () => {
     const engine = createTokenizerThresholdContextEngine({
       config: {
         thresholdTokens: 200,
-        encoding: "cl100k_base",
+        tokenizerModel: "deepseek-ai/DeepSeek-V4-Flash",
+        pythonPath: "python3",
         keepRecentTokens: 80,
       },
     });
@@ -258,7 +266,8 @@ describe("createTokenizerThresholdContextEngine", () => {
     const engine = createTokenizerThresholdContextEngine({
       config: {
         thresholdTokens: 200,
-        encoding: "cl100k_base",
+        tokenizerModel: "deepseek-ai/DeepSeek-V4-Flash",
+        pythonPath: "python3",
         keepRecentTokens: 80,
       },
     });

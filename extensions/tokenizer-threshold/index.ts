@@ -3,6 +3,7 @@
  * Owns threshold compaction with agent-core findCutPoint keep-recent tail.
  * Compacts only in assemble via api.runtime.llm.complete (+ extractive fallback).
  * Observes llm_input to cache system prompt tokens for threshold gating.
+ * Local token counts use Python transformers (default: deepseek-ai/DeepSeek-V4-Flash).
  */
 import { definePluginEntry } from "openclaw/plugin-sdk/plugin-entry";
 import { Type } from "typebox";
@@ -13,14 +14,8 @@ import { rememberSystemPrompt } from "./src/system-prompt-cache.js";
 const configSchema = Type.Object(
   {
     thresholdTokens: Type.Optional(Type.Integer({ minimum: 1 })),
-    encoding: Type.Optional(
-      Type.Union([
-        Type.Literal("cl100k_base"),
-        Type.Literal("o200k_base"),
-        Type.Literal("p50k_base"),
-        Type.Literal("r50k_base"),
-      ]),
-    ),
+    tokenizerModel: Type.Optional(Type.String({ minLength: 1 })),
+    pythonPath: Type.Optional(Type.String({ minLength: 1 })),
     keepRecentTokens: Type.Optional(Type.Integer({ minimum: 1 })),
   },
   { additionalProperties: false },
@@ -30,7 +25,7 @@ export default definePluginEntry({
   id: "tokenizer-threshold",
   name: "Tokenizer Threshold Context Engine",
   description:
-    "Own threshold compaction in assemble with findCutPoint keep-recent tail (default 113k / 20k) via api.runtime.llm.complete.",
+    "Own threshold compaction in assemble with findCutPoint keep-recent tail (default 113k / 20k) via api.runtime.llm.complete; tokens via Python transformers (DeepSeek-V4-Flash).",
   kind: "context-engine",
   configSchema,
   register(api) {

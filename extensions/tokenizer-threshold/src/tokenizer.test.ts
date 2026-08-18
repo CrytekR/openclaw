@@ -1,9 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { countMessageTokens, extractMessageText, getLocalTokenCounter } from "./tokenizer.js";
+import { resolveTokenizerThresholdConfig } from "./config.js";
+import { countMessageTokens, createTokenCounter, extractMessageText } from "./tokenizer.js";
+
+const testConfig = resolveTokenizerThresholdConfig({});
 
 describe("tokenizer helpers", () => {
-  it("loads a local tiktoken encoding and counts text", () => {
-    const counter = getLocalTokenCounter("cl100k_base");
+  it("counts text with the Vitest stub counter", () => {
+    const counter = createTokenCounter(testConfig);
     expect(counter.countText("hello world")).toBeGreaterThan(0);
     expect(counter.countText("")).toBe(0);
   });
@@ -27,7 +30,7 @@ describe("tokenizer helpers", () => {
   });
 
   it("counts message lists with framing overhead", () => {
-    const counter = getLocalTokenCounter("cl100k_base");
+    const counter = createTokenCounter(testConfig);
     const one = countMessageTokens({
       messages: [{ role: "user", content: "hello" }],
       counter,

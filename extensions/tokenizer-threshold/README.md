@@ -1,6 +1,6 @@
 # Tokenizer Threshold 上下文引擎
 
-面向 OpenClaw `v2026.6.6` 线的 **bundled context engine**。插件**自己拥有**阈值压缩（`ownsCompaction: true`），用本地 `js-tiktoken` 计数。
+面向 OpenClaw `v2026.6.6` 线的 **bundled context engine**。插件**自己拥有**阈值压缩（`ownsCompaction: true`），用 Python **`transformers`** 加载 **DeepSeek-V4-Flash** tokenizer 做本地计数。
 
 **设计选择（当前）：只在 `assemble` 里做超限检查与压缩。**  
 摘要优先走插件闭包里的 `api.runtime.llm.complete`；失败或不可用时回退抽取式摘要。  
@@ -12,7 +12,7 @@
 
 | 目标                       | 做法                                                                                          |
 | -------------------------- | --------------------------------------------------------------------------------------------- |
-| 固定阈值触发压缩           | 本地 tiktoken：`messages + 缓存的 system prompt` ≥ `thresholdTokens`                          |
+| 固定阈值触发压缩           | Python transformers：`messages + 缓存的 system prompt` ≥ `thresholdTokens`                    |
 | 只在 prompt 路径压缩       | **仅 `assemble()`** 检查并返回压缩后的消息列表                                                |
 | LLM 摘要                   | `api.runtime.llm.complete`（register 时惰性解析），非 `runtimeContext.llm`                    |
 | Mid-loop 缩小下一轮 prompt | 工具循环里 host 再次调用 `assemble`                                                           |
@@ -21,6 +21,18 @@
 | 给 host 记 checkpoint      | `compact()` 复用 `assemble` 已建好的内存视图，返回 `tokensBefore` / `tokensAfter` / `summary` |
 
 启用本插件后，OpenClaw 运行时对该 run **关闭**原生 in-attempt 自动 compaction（由 `ownsCompaction: true` 接管）。
+
+---
+
+## 依赖（Python）
+
+Gateway 主机需要可用的 Python 3，并安装：
+
+```bash
+pip install -r extensions/tokenizer-threshold/python/requirements.txt
+```
+
+首次启动会通过 Hugging Face 拉取 tokenizer 文件（默认模型 `deepseek-ai/DeepSeek-V4-Flash`）。可用环境变量 `HF_HOME` / `HUGGINGFACE_HUB_CACHE` 指定缓存目录。Node 侧通过持久 Python worker（stdin/stdout JSONL）计数；Vitest 默认用字符 stub，不启动 Python。
 
 ---
 
@@ -41,7 +53,8 @@
         // hooks: { allowConversationAccess: true },
         config: {
           thresholdTokens: 113000,
-          encoding: "cl100k_base",
+          tokenizerModel: "deepseek-ai/DeepSeek-V4-Flash", // 或别名 deepseek-v4-flash
+          pythonPath: "python3",
           keepRecentTokens: 20000,
         },
       },
@@ -54,11 +67,12 @@
 
 ### 配置项
 
-| 字段               | 类型   | 默认          | 说明                                                                                    |
-| ------------------ | ------ | ------------- | --------------------------------------------------------------------------------------- |
-| `thresholdTokens`  | 正整数 | `113000`      | 本地估计达到该值时，`assemble` 触发压缩。应低于模型上下文窗口，并预留回复/工具输出余量  |
-| `encoding`         | 枚举   | `cl100k_base` | `js-tiktoken` 编码：`cl100k_base` \| `o200k_base` \| `p50k_base` \| `r50k_base`         |
-| `keepRecentTokens` | 正整数 | `20000`       | 压缩后从**最新一端**保留的近似 verbatim token 预算（与 agent-core `findCutPoint` 一致） |
+| 字段               | 类型   | 默认                            | 说明                                                                                    |
+| ------------------ | ------ | ------------------------------- | --------------------------------------------------------------------------------------- |
+| `thresholdTokens`  | 正整数 | `113000`                        | 本地估计达到该值时，`assemble` 触发压缩。应低于模型上下文窗口，并预留回复/工具输出余量  |
+| `tokenizerModel`   | 字符串 | `deepseek-ai/DeepSeek-V4-Flash` | Hugging Face 模型 id；别名 `deepseek-v4-flash` 会映射到该默认 id                        |
+| `pythonPath`       | 字符串 | `python3`                       | 运行 `python/token_counter_server.py` 的解释器                                          |
+| `keepRecentTokens` | 正整数 | `20000`                         | 压缩后从**最新一端**保留的近似 verbatim token 预算（与 agent-core `findCutPoint` 一致） |
 
 约束：
 
@@ -99,7 +113,7 @@ llm_input ──► 缓存 system prompt（sessionId / sessionKey）
 5. 写入进程内 `session-state`，供后续 `assemble` 复用与 `compact` 回报。
 6. **不写** transcript / `sessions.json`。
 
-注意：`assemble` 在「下一轮模型调用前」执行；其中的 LLM 摘要会**增加延迟与费用**。这是本设计的显式取舍。
+注意：`assemble` 在「下一轮模型调用前」执行；其中的 LLM 摘要会**增加延迟与费用**。这是本设计的显式取舍。首次（或 worker 重启后）token 计数会阻塞到 Python 加载完 tokenizer。
 
 ### `afterTurn`
 
@@ -117,7 +131,7 @@ llm_input ──► 缓存 system prompt（sessionId / sessionKey）
 
 ### 计入本地门控
 
-1. **会话 `messages`**：tiktoken + 每条 framing `+4`。
+1. **会话 `messages`**：transformers tokenizer + 每条 framing `+4`。
 2. **缓存的 system prompt**：来自同插件 `llm_input` hook。
 
 ### 不计入
@@ -190,9 +204,10 @@ api.registerContextEngine("tokenizer-threshold", () =>
 ## 运维建议
 
 1. 用 `/context detail` 估 system / tools schema，再设 `thresholdTokens`。
-2. 接受：超限时 **assemble 会变慢**（等 LLM 摘要）。
+2. 接受：超限时 **assemble 会变慢**（等 LLM 摘要）；首次计数还可能等 tokenizer 下载/加载。
 3. 改插件后**重启 gateway**。
 4. 若 LLM 摘要频繁失败，日志/行为上会静默回退抽取式（不打断工具循环）。
+5. 离线调试可设 `TOKENIZER_THRESHOLD_STUB=1`（字符长度 stub）。
 
 ---
 
@@ -205,7 +220,9 @@ api.registerContextEngine("tokenizer-threshold", () =>
 | `src/compact-logic.ts`           | 阈值门控 + 原生风格组装                              |
 | `src/cut-point.ts`               | `findCutPoint` 移植                                  |
 | `src/native-compact-assemble.ts` | 摘要包装 + 保留尾                                    |
-| `src/tokenizer.ts`               | js-tiktoken                                          |
+| `src/tokenizer.ts`               | Node ↔ Python transformers worker                    |
+| `python/token_counter_server.py` | 持久 JSONL tokenizer 进程                            |
+| `python/requirements.txt`        | `transformers` 依赖                                  |
 | `src/system-prompt-cache.ts`     | system 缓存                                          |
 | `src/session-state.ts`           | 进程内压缩视图                                       |
 | `src/llm-summary.ts`             | 调 `llm.complete` 的摘要文案                         |
@@ -227,4 +244,5 @@ api.registerContextEngine("tokenizer-threshold", () =>
 2. Tool JSON schema、附件、provider wrapper 不计入本地估计。
 3. `assemble` 内 LLM 无 host 注入的 `abortSignal`（`compact` 路径可带 signal）。
 4. `assemble` 压缩不自动增加 Comped；需 host 再调 `compact()`。
-5. 与真实 provider tokenizer 有偏差；用实机 usage 校准阈值。
+5. 与真实 provider usage 可能仍有偏差；用实机 usage 校准阈值。
+6. 需要本机 Python + `transformers`；worker 崩溃时 Node 回退空白分词计数。

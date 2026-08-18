@@ -24,7 +24,7 @@ import {
   type TokenizerThresholdSessionState,
 } from "./session-state.js";
 import { getCachedSystemPrompt } from "./system-prompt-cache.js";
-import { countPromptTokens, getLocalTokenCounter, type TokenCounter } from "./tokenizer.js";
+import { countPromptTokens, createTokenCounter, type TokenCounter } from "./tokenizer.js";
 
 type CompactResult = {
   ok: boolean;
@@ -79,7 +79,7 @@ export function buildContextEngineCheckpointTrigger(params: {
 function toCompactResult(params: {
   state: TokenizerThresholdSessionState;
   thresholdTokens: number;
-  encoding: TokenizerThresholdConfig["encoding"];
+  tokenizerModel: TokenizerThresholdConfig["tokenizerModel"];
   tokenBudget?: number;
 }): CompactResult {
   return {
@@ -92,7 +92,7 @@ function toCompactResult(params: {
       details: {
         engine: "tokenizer-threshold",
         thresholdTokens: params.thresholdTokens,
-        encoding: params.encoding,
+        tokenizerModel: params.tokenizerModel,
         summaryFromLlm: params.state.summaryFromLlm,
         checkpointTrigger: buildContextEngineCheckpointTrigger({
           currentTokenCount: params.state.tokensBefore,
@@ -176,7 +176,7 @@ export function createTokenizerThresholdContextEngine(params: {
    */
   resolveLlmComplete?: () => RuntimeLlmComplete | undefined;
 }) {
-  const counter = getLocalTokenCounter(params.config.encoding);
+  const counter = createTokenCounter(params.config);
   let compactInFlight: Promise<CompactResult> | null = null;
 
   const runEngineCompaction = (compactParams: {
@@ -241,7 +241,7 @@ export function createTokenizerThresholdContextEngine(params: {
     return toCompactResult({
       state,
       thresholdTokens: params.config.thresholdTokens,
-      encoding: params.config.encoding,
+      tokenizerModel: params.config.tokenizerModel,
       tokenBudget: compactParams.tokenBudget,
     });
   };
@@ -432,7 +432,7 @@ export function createTokenizerThresholdContextEngine(params: {
             return toCompactResult({
               state,
               thresholdTokens: params.config.thresholdTokens,
-              encoding: params.config.encoding,
+              tokenizerModel: params.config.tokenizerModel,
               tokenBudget: compactParams.tokenBudget,
             });
           }
