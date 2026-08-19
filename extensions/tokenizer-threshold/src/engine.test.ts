@@ -58,6 +58,7 @@ describe("createTokenizerThresholdContextEngine", () => {
     const first = assembled.messages[0] as { role?: string; content?: string };
     expect(first.role).toBe("user");
     expect(String(first.content)).toContain(COMPACTION_SUMMARY_PREFIX.trim());
+    expect(String(first.content)).toContain("超过阈值 200 token，触发压缩");
   });
 
   it("reports tokenizer estimates for short assemble prompts", async () => {
@@ -164,7 +165,8 @@ describe("createTokenizerThresholdContextEngine", () => {
       sessionFile: "/tmp/session.jsonl",
       force: true,
     });
-    expect(compactResult.result?.summary).toBe("LLM distilled earlier context");
+    expect(compactResult.result?.summary).toContain("LLM distilled earlier context");
+    expect(compactResult.result?.summary).toContain("超过阈值 200 token，触发压缩");
     expect(compactResult.result?.details).toMatchObject({ summaryFromLlm: true });
   });
 

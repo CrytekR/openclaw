@@ -25,6 +25,33 @@ export const COMPACTION_SUMMARY_SUFFIX = `
 const EXTRACTIVE_MAX_CHARS = 12_000;
 const EXTRACTIVE_PER_MESSAGE_CHARS = 800;
 
+/** Human-readable gate reason prepended to compaction summary bodies. */
+export function buildCompactionTriggerReason(params: {
+  tokensBefore: number;
+  thresholdTokens: number;
+}): string {
+  const tokensBefore = Math.max(0, Math.floor(params.tokensBefore));
+  const thresholdTokens = Math.max(1, Math.floor(params.thresholdTokens));
+  return `上下文长度为 ${tokensBefore} token，超过阈值 ${thresholdTokens} token，触发压缩。`;
+}
+
+/** Prepend the gate reason once; keep existing reason if already present. */
+export function withCompactionTriggerReason(params: {
+  summary: string;
+  tokensBefore: number;
+  thresholdTokens: number;
+}): string {
+  const body = params.summary.trim() || "No prior history.";
+  const reason = buildCompactionTriggerReason({
+    tokensBefore: params.tokensBefore,
+    thresholdTokens: params.thresholdTokens,
+  });
+  if (body.startsWith("上下文长度为 ")) {
+    return body;
+  }
+  return `${reason}\n\n${body}`;
+}
+
 export type NativeCompactAssembly = {
   compacted: boolean;
   reason?: string;
@@ -80,9 +107,14 @@ export function buildExtractiveSummary(params: {
 export function buildCompactionSummaryUserMessage(params: {
   summary: string;
   tokensBefore: number;
+  thresholdTokens: number;
   timestamp?: number;
 }): AgentMessage {
-  const summary = params.summary.trim() || "No prior history.";
+  const summary = withCompactionTriggerReason({
+    summary: params.summary,
+    tokensBefore: params.tokensBefore,
+    thresholdTokens: params.thresholdTokens,
+  });
   return {
     role: "user",
     content: COMPACTION_SUMMARY_PREFIX + summary + COMPACTION_SUMMARY_SUFFIX,
@@ -90,6 +122,7 @@ export function buildCompactionSummaryUserMessage(params: {
     // Diagnostic only; providers ignore unknown fields.
     __tokenizerThresholdCompaction: {
       tokensBefore: params.tokensBefore,
+      thresholdTokens: params.thresholdTokens,
     },
   } as AgentMessage;
 }
@@ -103,9 +136,17 @@ export function assembleNativeStyleCompactedMessages(params: {
   keepRecentTokens: number;
   /** Prefer a previously generated LLM/extractive summary for the summarizable prefix. */
   summaryOverride?: string;
+  /**
+   * Prompt-side gate counts shown in the summary trigger reason.
+   * Defaults to this function's message-only tokensBefore / thresholdTokens.
+   */
+  triggerTokensBefore?: number;
+  triggerThresholdTokens?: number;
   countMessageTokens: (messages: readonly AgentMessage[]) => number;
 }): NativeCompactAssembly {
   const tokensBefore = params.countMessageTokens(params.messages);
+  const triggerTokensBefore = params.triggerTokensBefore ?? tokensBefore;
+  const triggerThresholdTokens = params.triggerThresholdTokens ?? params.thresholdTokens;
   if (params.messages.length === 0) {
     return {
       compacted: false,
@@ -166,16 +207,23 @@ export function assembleNativeStyleCompactedMessages(params: {
     EXTRACTIVE_PER_MESSAGE_CHARS,
     Math.max(120, Math.floor(params.thresholdTokens / 2)),
   );
-  const summary =
+  const rawSummary =
     params.summaryOverride?.trim() ||
     buildExtractiveSummary({
       messages: split.summarizableMessages,
       maxChars: extractiveMaxChars,
       perMessageChars: extractivePerMessageChars,
     });
+  const summary = withCompactionTriggerReason({
+    summary: rawSummary,
+    tokensBefore: triggerTokensBefore,
+    thresholdTokens: triggerThresholdTokens,
+  });
   const summaryMessage = buildCompactionSummaryUserMessage({
+    // Already includes the gate reason; buildCompactionSummaryUserMessage is idempotent.
     summary,
-    tokensBefore,
+    tokensBefore: triggerTokensBefore,
+    thresholdTokens: triggerThresholdTokens,
   });
 
   let preserved = split.preservedMessages;

@@ -75,6 +75,9 @@ export function computeTokenizerThresholdCompaction(params: {
     counter: params.counter,
     keepRecentTokens: params.keepRecentTokens ?? 20_000,
     summaryOverride: params.summaryOverride,
+    // Gate reason in the summary body uses full prompt pressure + configured threshold.
+    triggerTokensBefore: tokensBefore,
+    triggerThresholdTokens: params.thresholdTokens,
     countMessageTokens: (messages) => countMessageTokens({ messages, counter: params.counter }),
   });
   if (!assembled.compacted) {

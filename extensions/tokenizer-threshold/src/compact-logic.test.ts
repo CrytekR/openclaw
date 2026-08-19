@@ -118,10 +118,12 @@ describe("computeTokenizerThresholdCompaction", () => {
     expect(result.tokensAfter).toBeLessThan(result.tokensBefore);
     expect(result.messages.at(-1)).toMatchObject({ role: "user", content: "latest" });
     expect(result.summary).toContain("Extractive compaction");
+    expect(result.summary).toContain("超过阈值 200 token，触发压缩");
     const first = result.messages[0] as { role?: string; content?: string };
     expect(first.role).toBe("user");
     expect(String(first.content)).toContain(COMPACTION_SUMMARY_PREFIX.trim());
     expect(String(first.content)).toContain(COMPACTION_SUMMARY_SUFFIX.trim());
+    expect(String(first.content)).toContain("超过阈值 200 token，触发压缩");
   });
 
   it("counts cached system prompt toward the threshold gate", () => {
@@ -172,9 +174,13 @@ describe("assembleNativeStyleCompactedMessages", () => {
       countMessageTokens: (msgs) => countMessageTokens({ messages: msgs, counter }),
     });
     expect(result.compacted).toBe(true);
-    expect(result.summary).toBe("LLM summary of earlier work");
+    expect(result.summary).toContain("LLM summary of earlier work");
+    expect(result.summary).toContain("超过阈值 200 token，触发压缩");
     expect(String((result.messages[0] as { content?: string }).content)).toContain(
       "LLM summary of earlier work",
+    );
+    expect(String((result.messages[0] as { content?: string }).content)).toContain(
+      "超过阈值 200 token，触发压缩",
     );
   });
 });
