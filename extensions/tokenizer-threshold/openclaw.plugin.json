@@ -12,8 +12,8 @@
       "help": "When local tokenizer counts reach this value, assemble returns a summary message plus a keepRecentTokens verbatim tail under the budget."
     },
     "tokenizerModel": {
-      "label": "Hugging Face tokenizer model",
-      "help": "Model id loaded by Python transformers AutoTokenizer (default deepseek-ai/DeepSeek-V4-Flash). Alias: deepseek-v4-flash."
+      "label": "Tokenizer model",
+      "help": "Bundled alias deepseek-v4-flash (offline), a local tokenizer directory, or another Hugging Face model id."
     },
     "pythonPath": {
       "label": "Python executable",
@@ -36,7 +36,7 @@
       "tokenizerModel": {
         "type": "string",
         "minLength": 1,
-        "default": "deepseek-ai/DeepSeek-V4-Flash"
+        "default": "deepseek-v4-flash"
       },
       "pythonPath": {
         "type": "string",

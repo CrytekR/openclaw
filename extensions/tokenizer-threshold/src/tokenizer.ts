@@ -1,6 +1,6 @@
 /**
  * Local token counting for the context engine via Python transformers.
- * Default model: deepseek-ai/DeepSeek-V4-Flash (deepseek-v4-flash).
+ * Default model: bundled deepseek-v4-flash (python/bundled/..., offline).
  */
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { readSync, writeSync } from "node:fs";

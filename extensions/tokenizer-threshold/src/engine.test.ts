@@ -34,7 +34,7 @@ describe("createTokenizerThresholdContextEngine", () => {
     const engine = createTokenizerThresholdContextEngine({
       config: {
         thresholdTokens: 200,
-        tokenizerModel: "deepseek-ai/DeepSeek-V4-Flash",
+        tokenizerModel: "deepseek-v4-flash",
         pythonPath: "python3",
         keepRecentTokens: 80,
       },
@@ -64,7 +64,7 @@ describe("createTokenizerThresholdContextEngine", () => {
     const engine = createTokenizerThresholdContextEngine({
       config: {
         thresholdTokens: 113_000,
-        tokenizerModel: "deepseek-ai/DeepSeek-V4-Flash",
+        tokenizerModel: "deepseek-v4-flash",
         pythonPath: "python3",
         keepRecentTokens: 20_000,
       },
@@ -97,7 +97,7 @@ describe("createTokenizerThresholdContextEngine", () => {
     const underMessageBudget = createTokenizerThresholdContextEngine({
       config: {
         thresholdTokens: messageTokens + 10_000,
-        tokenizerModel: "deepseek-ai/DeepSeek-V4-Flash",
+        tokenizerModel: "deepseek-v4-flash",
         pythonPath: "python3",
         keepRecentTokens: 80,
       },
@@ -112,7 +112,7 @@ describe("createTokenizerThresholdContextEngine", () => {
     const engine = createTokenizerThresholdContextEngine({
       config: {
         thresholdTokens: messageTokens + 50,
-        tokenizerModel: "deepseek-ai/DeepSeek-V4-Flash",
+        tokenizerModel: "deepseek-v4-flash",
         pythonPath: "python3",
         keepRecentTokens: 80,
       },
@@ -137,7 +137,7 @@ describe("createTokenizerThresholdContextEngine", () => {
     const engine = createTokenizerThresholdContextEngine({
       config: {
         thresholdTokens: 200,
-        tokenizerModel: "deepseek-ai/DeepSeek-V4-Flash",
+        tokenizerModel: "deepseek-v4-flash",
         pythonPath: "python3",
         keepRecentTokens: 80,
       },
@@ -172,7 +172,7 @@ describe("createTokenizerThresholdContextEngine", () => {
     const engine = createTokenizerThresholdContextEngine({
       config: {
         thresholdTokens: 200,
-        tokenizerModel: "deepseek-ai/DeepSeek-V4-Flash",
+        tokenizerModel: "deepseek-v4-flash",
         pythonPath: "python3",
         keepRecentTokens: 80,
       },
@@ -214,7 +214,7 @@ describe("createTokenizerThresholdContextEngine", () => {
     const engine = createTokenizerThresholdContextEngine({
       config: {
         thresholdTokens: 200,
-        tokenizerModel: "deepseek-ai/DeepSeek-V4-Flash",
+        tokenizerModel: "deepseek-v4-flash",
         pythonPath: "python3",
         keepRecentTokens: 80,
       },
@@ -266,7 +266,7 @@ describe("createTokenizerThresholdContextEngine", () => {
     const engine = createTokenizerThresholdContextEngine({
       config: {
         thresholdTokens: 200,
-        tokenizerModel: "deepseek-ai/DeepSeek-V4-Flash",
+        tokenizerModel: "deepseek-v4-flash",
         pythonPath: "python3",
         keepRecentTokens: 80,
       },

@@ -4,6 +4,7 @@ export {
   DEFAULT_PYTHON_PATH,
   DEFAULT_THRESHOLD_TOKENS,
   DEFAULT_TOKENIZER_MODEL,
+  DEEPSEEK_V4_FLASH_HF_ID,
   resolveTokenizerThresholdConfig,
   type TokenizerThresholdConfig,
 } from "./src/config.js";

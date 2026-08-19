@@ -32,7 +32,15 @@ Gateway 主机需要可用的 Python 3，并安装：
 pip install -r extensions/tokenizer-threshold/python/requirements.txt
 ```
 
-首次启动会通过 Hugging Face 拉取 tokenizer 文件（默认模型 `deepseek-ai/DeepSeek-V4-Flash`）。可用环境变量 `HF_HOME` / `HUGGINGFACE_HUB_CACHE` 指定缓存目录。Node 侧通过持久 Python worker（stdin/stdout JSONL）计数；Vitest 默认用字符 stub，不启动 Python。
+**默认 tokenizer 已打包在插件内**（`python/bundled/deepseek-v4-flash/`，约 6MB：`tokenizer.json` + `tokenizer_config.json`），运行时用 `local_files_only=True` 加载，**不联网**。
+
+刷新打包文件（维护者，需网络一次）：
+
+```bash
+python3 extensions/tokenizer-threshold/python/download_bundled_tokenizer.py
+```
+
+若把 `tokenizerModel` 改成其他 HF id（非 `deepseek-v4-flash` / 非已存在本地目录），才会走 Hugging Face 下载。Node 侧通过持久 Python worker（stdin/stdout JSONL）计数；Vitest 默认用 chars/4 stub，不启动 Python。
 
 ---
 
@@ -53,7 +61,7 @@ pip install -r extensions/tokenizer-threshold/python/requirements.txt
         // hooks: { allowConversationAccess: true },
         config: {
           thresholdTokens: 113000,
-          tokenizerModel: "deepseek-ai/DeepSeek-V4-Flash", // 或别名 deepseek-v4-flash
+          tokenizerModel: "deepseek-v4-flash", // 默认：插件内 bundled，离线
           pythonPath: "python3",
           keepRecentTokens: 20000,
         },
@@ -67,12 +75,12 @@ pip install -r extensions/tokenizer-threshold/python/requirements.txt
 
 ### 配置项
 
-| 字段               | 类型   | 默认                            | 说明                                                                                    |
-| ------------------ | ------ | ------------------------------- | --------------------------------------------------------------------------------------- |
-| `thresholdTokens`  | 正整数 | `113000`                        | 本地估计达到该值时，`assemble` 触发压缩。应低于模型上下文窗口，并预留回复/工具输出余量  |
-| `tokenizerModel`   | 字符串 | `deepseek-ai/DeepSeek-V4-Flash` | Hugging Face 模型 id；别名 `deepseek-v4-flash` 会映射到该默认 id                        |
-| `pythonPath`       | 字符串 | `python3`                       | 运行 `python/token_counter_server.py` 的解释器                                          |
-| `keepRecentTokens` | 正整数 | `20000`                         | 压缩后从**最新一端**保留的近似 verbatim token 预算（与 agent-core `findCutPoint` 一致） |
+| 字段               | 类型   | 默认                | 说明                                                                                    |
+| ------------------ | ------ | ------------------- | --------------------------------------------------------------------------------------- |
+| `thresholdTokens`  | 正整数 | `113000`            | 本地估计达到该值时，`assemble` 触发压缩。应低于模型上下文窗口，并预留回复/工具输出余量  |
+| `tokenizerModel`   | 字符串 | `deepseek-v4-flash` | 默认用插件内 bundled tokenizer（离线）。也可给本地目录或其他 HF model id                |
+| `pythonPath`       | 字符串 | `python3`           | 运行 `python/token_counter_server.py` 的解释器                                          |
+| `keepRecentTokens` | 正整数 | `20000`             | 压缩后从**最新一端**保留的近似 verbatim token 预算（与 agent-core `findCutPoint` 一致） |
 
 约束：
 
@@ -113,7 +121,7 @@ llm_input ──► 缓存 system prompt（sessionId / sessionKey）
 5. 写入进程内 `session-state`，供后续 `assemble` 复用与 `compact` 回报。
 6. **不写** transcript / `sessions.json`。
 
-注意：`assemble` 在「下一轮模型调用前」执行；其中的 LLM 摘要会**增加延迟与费用**。这是本设计的显式取舍。首次（或 worker 重启后）token 计数会阻塞到 Python 加载完 tokenizer。
+注意：`assemble` 在「下一轮模型调用前」执行；其中的 LLM 摘要会**增加延迟与费用**。这是本设计的显式取舍。首次（或 worker 重启后）会加载 bundled tokenizer（本地磁盘，不联网）。
 
 ### `afterTurn`
 
@@ -204,7 +212,7 @@ api.registerContextEngine("tokenizer-threshold", () =>
 ## 运维建议
 
 1. 用 `/context detail` 估 system / tools schema，再设 `thresholdTokens`。
-2. 接受：超限时 **assemble 会变慢**（等 LLM 摘要）；首次计数还可能等 tokenizer 下载/加载。
+2. 接受：超限时 **assemble 会变慢**（等 LLM 摘要）；首次计数会从磁盘加载 bundled tokenizer。
 3. 改插件后**重启 gateway**。
 4. 若 LLM 摘要频繁失败，日志/行为上会静默回退抽取式（不打断工具循环）。
 5. 离线调试可设 `TOKENIZER_THRESHOLD_STUB=1`（字符长度 stub）。
@@ -213,20 +221,22 @@ api.registerContextEngine("tokenizer-threshold", () =>
 
 ## 文件结构
 
-| 路径                             | 职责                                                 |
-| -------------------------------- | ---------------------------------------------------- |
-| `index.ts`                       | `llm_input` + 注册引擎 + 注入 `resolveLlmComplete`   |
-| `src/engine.ts`                  | **仅 assemble 压缩**；afterTurn 空；compact 复用状态 |
-| `src/compact-logic.ts`           | 阈值门控 + 原生风格组装                              |
-| `src/cut-point.ts`               | `findCutPoint` 移植                                  |
-| `src/native-compact-assemble.ts` | 摘要包装 + 保留尾                                    |
-| `src/tokenizer.ts`               | Node ↔ Python transformers worker                    |
-| `python/token_counter_server.py` | 持久 JSONL tokenizer 进程                            |
-| `python/requirements.txt`        | `transformers` 依赖                                  |
-| `src/system-prompt-cache.ts`     | system 缓存                                          |
-| `src/session-state.ts`           | 进程内压缩视图                                       |
-| `src/llm-summary.ts`             | 调 `llm.complete` 的摘要文案                         |
-| `openclaw.plugin.json`           | 清单 / schema                                        |
+| 路径                                   | 职责                                                 |
+| -------------------------------------- | ---------------------------------------------------- |
+| `index.ts`                             | `llm_input` + 注册引擎 + 注入 `resolveLlmComplete`   |
+| `src/engine.ts`                        | **仅 assemble 压缩**；afterTurn 空；compact 复用状态 |
+| `src/compact-logic.ts`                 | 阈值门控 + 原生风格组装                              |
+| `src/cut-point.ts`                     | `findCutPoint` 移植                                  |
+| `src/native-compact-assemble.ts`       | 摘要包装 + 保留尾                                    |
+| `src/tokenizer.ts`                     | Node ↔ Python transformers worker                    |
+| `python/token_counter_server.py`       | 持久 JSONL tokenizer 进程                            |
+| `python/bundled/deepseek-v4-flash/`    | 离线 tokenizer 文件（默认）                          |
+| `python/download_bundled_tokenizer.py` | 维护者刷新 bundled 文件                              |
+| `python/requirements.txt`              | `transformers` 依赖                                  |
+| `src/system-prompt-cache.ts`           | system 缓存                                          |
+| `src/session-state.ts`                 | 进程内压缩视图                                       |
+| `src/llm-summary.ts`                   | 调 `llm.complete` 的摘要文案                         |
+| `openclaw.plugin.json`                 | 清单 / schema                                        |
 
 ---
 
@@ -245,4 +255,5 @@ api.registerContextEngine("tokenizer-threshold", () =>
 3. `assemble` 内 LLM 无 host 注入的 `abortSignal`（`compact` 路径可带 signal）。
 4. `assemble` 压缩不自动增加 Comped；需 host 再调 `compact()`。
 5. 与真实 provider usage 可能仍有偏差；用实机 usage 校准阈值。
-6. 需要本机 Python + `transformers`；worker 崩溃时 Node 回退空白分词计数。
+6. 默认 tokenizer 已 bundled；仅自定义其他 HF id 时才需要网络。
+7. 需要本机 Python + `transformers`；worker 崩溃时 Node 回退空白分词计数。

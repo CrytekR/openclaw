@@ -1,11 +1,16 @@
 /**
  * Plugin config for the tokenizer-threshold context engine.
- * Local counts use Python transformers (DeepSeek-V4-Flash tokenizer by default).
+ * Local counts use Python transformers; default tokenizer is bundled offline.
  */
 
 export const DEFAULT_THRESHOLD_TOKENS = 113_000;
-/** Official DeepSeek-V4-Flash tokenizer on Hugging Face (deepseek-v4-flash). */
-export const DEFAULT_TOKENIZER_MODEL = "deepseek-ai/DeepSeek-V4-Flash";
+/**
+ * Logical id for the bundled DeepSeek-V4-Flash tokenizer
+ * (`python/bundled/deepseek-v4-flash`, no network).
+ */
+export const DEFAULT_TOKENIZER_MODEL = "deepseek-v4-flash";
+/** Hugging Face id that maps onto the same bundled tokenizer. */
+export const DEEPSEEK_V4_FLASH_HF_ID = "deepseek-ai/DeepSeek-V4-Flash";
 export const DEFAULT_PYTHON_PATH = "python3";
 /** Same default as agent-core DEFAULT_COMPACTION_SETTINGS.keepRecentTokens. */
 export const DEFAULT_KEEP_RECENT_TOKENS = 20_000;
@@ -13,8 +18,8 @@ export const DEFAULT_KEEP_RECENT_TOKENS = 20_000;
 export type TokenizerThresholdConfig = {
   thresholdTokens: number;
   /**
-   * Hugging Face model id whose tokenizer is loaded via Python transformers
-   * (default: deepseek-ai/DeepSeek-V4-Flash).
+   * Tokenizer model: bundled alias (`deepseek-v4-flash`), a local directory,
+   * or another Hugging Face model id loaded by Python transformers.
    */
   tokenizerModel: string;
   /** Python executable used to run the transformers token-counter worker. */
@@ -41,14 +46,15 @@ function readNonEmptyString(value: unknown, fallback: string): string {
   return trimmed || fallback;
 }
 
-/** Map short aliases like deepseek-v4-flash onto the HF model id. */
+/** Map HF / short aliases onto the bundled deepseek-v4-flash logical id. */
 function normalizeTokenizerModel(value: unknown): string {
   const raw = readNonEmptyString(value, DEFAULT_TOKENIZER_MODEL);
   const lowered = raw.toLowerCase();
   if (
     lowered === "deepseek-v4-flash" ||
     lowered === "deepseek_v4_flash" ||
-    lowered === "deepseek-v4flash"
+    lowered === "deepseek-v4flash" ||
+    lowered === DEEPSEEK_V4_FLASH_HF_ID.toLowerCase()
   ) {
     return DEFAULT_TOKENIZER_MODEL;
   }
