@@ -223,9 +223,14 @@ export function createTokenizerThresholdContextEngine(params: {
       };
     }
 
+    const overrideBody = summaryOverride?.trim() ?? "";
     const summaryFromLlm = Boolean(
       compactParams.summaryFromLlm ||
-      (summaryOverride && reusable.summary === summaryOverride && reusable.summaryFromLlm),
+      (overrideBody &&
+        reusable.summaryFromLlm &&
+        (reusable.summary === summaryOverride ||
+          computation.summary === overrideBody ||
+          computation.summary.includes(overrideBody))),
     );
     const state: TokenizerThresholdSessionState = {
       compactedSourceLength: compactParams.messages.length,
@@ -335,6 +340,7 @@ export function createTokenizerThresholdContextEngine(params: {
       });
 
       if (computation.compacted) {
+        const resolvedBody = resolved.summary?.trim() ?? "";
         const state: TokenizerThresholdSessionState = {
           compactedSourceLength: assembleParams.messages.length,
           summarizableCount: computation.summarizableCount,
@@ -343,8 +349,11 @@ export function createTokenizerThresholdContextEngine(params: {
           tokensBefore: computation.tokensBefore,
           tokensAfter: computation.tokensAfter,
           summary: computation.summary,
+          // computation.summary may prepend the gate reason; match on body text.
           summaryFromLlm: Boolean(
-            resolved.summaryFromLlm && resolved.summary && resolved.summary === computation.summary,
+            resolved.summaryFromLlm &&
+            resolvedBody &&
+            (computation.summary === resolvedBody || computation.summary.includes(resolvedBody)),
           ),
         };
         setSessionCompactionState(stateKey, state);
