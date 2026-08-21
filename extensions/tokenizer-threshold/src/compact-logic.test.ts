@@ -154,6 +154,33 @@ describe("computeTokenizerThresholdCompaction", () => {
       countMessageTokens({ messages: withSystem.messages, counter }),
     );
   });
+
+  it("counts cached tool schemas toward the threshold gate", () => {
+    const messages = [
+      { role: "user", content: "word ".repeat(80) },
+      { role: "assistant", content: "word ".repeat(80) },
+      { role: "user", content: "latest" },
+    ];
+    const messageTokens = countMessageTokens({ messages, counter });
+    const withoutTools = computeTokenizerThresholdCompaction({
+      messages,
+      thresholdTokens: messageTokens + 100,
+      counter,
+      keepRecentTokens: 60,
+    });
+    expect(withoutTools.compacted).toBe(false);
+
+    const withTools = computeTokenizerThresholdCompaction({
+      messages,
+      thresholdTokens: messageTokens + 100,
+      counter,
+      keepRecentTokens: 60,
+      toolsSchemaTokens: 5_000,
+    });
+    expect(withTools.compacted).toBe(true);
+    expect(withTools.tokensBefore).toBe(messageTokens + 5_000);
+    expect(withTools.summary).toContain("超过阈值");
+  });
 });
 
 describe("assembleNativeStyleCompactedMessages", () => {

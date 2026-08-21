@@ -18,16 +18,19 @@ import { COMPACTION_SUMMARY_PREFIX } from "./native-compact-assemble.js";
 import { resetTokenizerThresholdSessionStatesForTest } from "./session-state.js";
 import { rememberSystemPrompt, resetSystemPromptCacheForTest } from "./system-prompt-cache.js";
 import { countMessageTokens, createTokenCounter } from "./tokenizer.js";
+import { rememberToolsSchemaTokens, resetToolsSchemaCacheForTest } from "./tools-schema-cache.js";
 
 describe("createTokenizerThresholdContextEngine", () => {
   beforeEach(() => {
     resetTokenizerThresholdSessionStatesForTest();
     resetSystemPromptCacheForTest();
+    resetToolsSchemaCacheForTest();
   });
 
   afterEach(() => {
     resetTokenizerThresholdSessionStatesForTest();
     resetSystemPromptCacheForTest();
+    resetToolsSchemaCacheForTest();
   });
 
   it("assembles summary + keepRecentTokens tail when over threshold", async () => {
@@ -131,6 +134,55 @@ describe("createTokenizerThresholdContextEngine", () => {
       countMessageTokens({ messages: assembled.messages, counter }),
     );
     expect(assembled.messages.length).toBeLessThan(messages.length);
+  });
+
+  it("gates assemble on messages plus cached llm_input tool schema tokens", async () => {
+    const counter = createTokenCounter(resolveTokenizerThresholdConfig({}));
+    const messages = [
+      { role: "user", content: "word ".repeat(120) },
+      { role: "assistant", content: "word ".repeat(120) },
+      { role: "user", content: "latest" },
+    ] as const;
+    const messageTokens = countMessageTokens({ messages, counter });
+    rememberToolsSchemaTokens({
+      sessionId: "s-tools",
+      sessionKey: "agent:main:main",
+      tokens: 250,
+    });
+
+    const underMessageBudget = createTokenizerThresholdContextEngine({
+      config: {
+        thresholdTokens: messageTokens + 20_000,
+        tokenizerModel: "deepseek-v4-flash",
+        pythonPath: "python3",
+        keepRecentTokens: 80,
+      },
+    });
+    const intact = await underMessageBudget.assemble({
+      sessionId: "s-tools",
+      sessionKey: "agent:main:main",
+      messages: [...messages],
+    });
+    expect(intact.messages).toEqual([...messages]);
+
+    const thresholdTokens = messageTokens + 100;
+    const engine = createTokenizerThresholdContextEngine({
+      config: {
+        thresholdTokens,
+        tokenizerModel: "deepseek-v4-flash",
+        pythonPath: "python3",
+        keepRecentTokens: 80,
+      },
+    });
+    const assembled = await engine.assemble({
+      sessionId: "s-tools",
+      sessionKey: "agent:main:main",
+      messages: [...messages],
+    });
+    expect(assembled.messages).not.toEqual([...messages]);
+    expect(String((assembled.messages[0] as { content?: string }).content)).toContain(
+      `超过阈值 ${thresholdTokens} token，触发压缩`,
+    );
   });
 
   it("uses api.runtime.llm.complete from assemble when over threshold", async () => {

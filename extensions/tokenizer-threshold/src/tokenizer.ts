@@ -282,19 +282,46 @@ export function countSystemPromptTokens(params: {
   return params.counter.countText(text) + 4;
 }
 
+/** Count tokens for provider-bound tool JSON schemas (0 when missing/blank). */
+export function countToolsSchemaTokens(params: {
+  toolsSchema?: string;
+  toolsSchemaTokens?: number;
+  counter: TokenCounter;
+}): number {
+  if (
+    typeof params.toolsSchemaTokens === "number" &&
+    Number.isFinite(params.toolsSchemaTokens) &&
+    params.toolsSchemaTokens > 0
+  ) {
+    return Math.floor(params.toolsSchemaTokens);
+  }
+  const text = params.toolsSchema?.trim();
+  if (!text) {
+    return 0;
+  }
+  return params.counter.countText(text) + 4;
+}
+
 /**
- * Local prompt pressure: session messages plus optional cached system prompt.
- * Tool JSON schemas are still outside this estimate (not available to the engine).
+ * Local prompt pressure: messages + cached system prompt + cached tool schemas.
+ * Aligns better with OpenClaw's displayed provider prompt/context length.
  */
 export function countPromptTokens(params: {
   messages: readonly unknown[];
   systemPrompt?: string;
+  toolsSchema?: string;
+  toolsSchemaTokens?: number;
   counter: TokenCounter;
 }): number {
   return (
     countMessageTokens({ messages: params.messages, counter: params.counter }) +
     countSystemPromptTokens({
       systemPrompt: params.systemPrompt,
+      counter: params.counter,
+    }) +
+    countToolsSchemaTokens({
+      toolsSchema: params.toolsSchema,
+      toolsSchemaTokens: params.toolsSchemaTokens,
       counter: params.counter,
     })
   );

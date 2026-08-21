@@ -42,10 +42,17 @@ export {
   countMessageTokens,
   countPromptTokens,
   countSystemPromptTokens,
+  countToolsSchemaTokens,
   createTokenCounter,
   disposeTokenizerWorkers,
   extractMessageText,
   getLocalTokenCounter,
   type TokenCounter,
 } from "./src/tokenizer.js";
+export {
+  getCachedToolsSchemaTokens,
+  rememberToolsSchemaTokens,
+  resetToolsSchemaCacheForTest,
+  serializeToolsSchema,
+} from "./src/tools-schema-cache.js";
 export { windowMessagesToTokenBudget } from "./src/window.js";

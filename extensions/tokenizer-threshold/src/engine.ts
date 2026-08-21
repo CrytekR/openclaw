@@ -25,6 +25,7 @@ import {
 } from "./session-state.js";
 import { getCachedSystemPrompt } from "./system-prompt-cache.js";
 import { countPromptTokens, createTokenCounter, type TokenCounter } from "./tokenizer.js";
+import { getCachedToolsSchemaTokens } from "./tools-schema-cache.js";
 
 type CompactResult = {
   ok: boolean;
@@ -52,6 +53,16 @@ function resolveCachedSystemPrompt(params: {
   sessionKey?: string;
 }): string | undefined {
   return getCachedSystemPrompt({
+    sessionId: params.sessionId,
+    sessionKey: params.sessionKey,
+  });
+}
+
+function resolveCachedToolsSchemaTokens(params: {
+  sessionId: string;
+  sessionKey?: string;
+}): number {
+  return getCachedToolsSchemaTokens({
     sessionId: params.sessionId,
     sessionKey: params.sessionKey,
   });
@@ -199,6 +210,10 @@ export function createTokenizerThresholdContextEngine(params: {
         sessionId: compactParams.sessionId,
         sessionKey: compactParams.sessionKey,
       });
+    const toolsSchemaTokens = resolveCachedToolsSchemaTokens({
+      sessionId: compactParams.sessionId,
+      sessionKey: compactParams.sessionKey,
+    });
     const reusable = resolveReusableSummary({
       stateKey,
       messages: compactParams.messages,
@@ -214,6 +229,7 @@ export function createTokenizerThresholdContextEngine(params: {
       keepRecentTokens: params.config.keepRecentTokens,
       summaryOverride,
       systemPrompt,
+      toolsSchemaTokens,
     });
     if (!computation.compacted) {
       return {
@@ -298,9 +314,14 @@ export function createTokenizerThresholdContextEngine(params: {
         sessionId: assembleParams.sessionId,
         sessionKey: assembleParams.sessionKey,
       });
+      const toolsSchemaTokens = resolveCachedToolsSchemaTokens({
+        sessionId: assembleParams.sessionId,
+        sessionKey: assembleParams.sessionKey,
+      });
       const tokensBefore = countPromptTokens({
         messages: assembleParams.messages,
         systemPrompt,
+        toolsSchemaTokens,
         counter,
       });
 
@@ -337,6 +358,7 @@ export function createTokenizerThresholdContextEngine(params: {
         keepRecentTokens: params.config.keepRecentTokens,
         summaryOverride: resolved.summary,
         systemPrompt,
+        toolsSchemaTokens,
       });
 
       if (computation.compacted) {

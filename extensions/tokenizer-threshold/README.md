@@ -12,7 +12,7 @@
 
 | 目标                       | 做法                                                                                          |
 | -------------------------- | --------------------------------------------------------------------------------------------- |
-| 固定阈值触发压缩           | Python transformers：`messages + 缓存的 system prompt` ≥ `thresholdTokens`                    |
+| 固定阈值触发压缩           | Python transformers：`messages + system + tools schema` ≥ `thresholdTokens`                   |
 | 只在 prompt 路径压缩       | **仅 `assemble()`** 检查并返回压缩后的消息列表                                                |
 | LLM 摘要                   | `api.runtime.llm.complete`（register 时惰性解析），非 `runtimeContext.llm`                    |
 | Mid-loop 缩小下一轮 prompt | 工具循环里 host 再次调用 `assemble`                                                           |
@@ -141,15 +141,16 @@ llm_input ──► 缓存 system prompt（sessionId / sessionKey）
 
 1. **会话 `messages`**：transformers tokenizer + 每条 framing `+4`。
 2. **缓存的 system prompt**：来自同插件 `llm_input` hook。
+3. **缓存的 tools JSON schema**：来自同插件 `llm_input.tools`（与 OpenClaw 展示的 provider prompt 对齐的关键缺口）。
 
 ### 不计入
 
-| 项目                     | 原因                      |
-| ------------------------ | ------------------------- |
-| Tools JSON schema        | 引擎合约拿不到            |
-| Provider wrapper         | 不可见                    |
-| 图片等非文本             | 当前只抽文本              |
-| Host `currentTokenCount` | 滞后/跳变；故意不用做门控 |
+| 项目                      | 原因                     |
+| ------------------------- | ------------------------ |
+| Provider wrapper / 图片等 | 不可见或未抽文本         |
+| Host `currentTokenCount`  | 滞后；门控用本地实时估计 |
+
+> 若曾出现「阈值设 64k，OpenClaw 显示约 130k 才压」：旧版未计 tools schema。升级后应接近 `/status` 的 Context 数；首次 `llm_input` 前仍可能偏矮。
 
 ### System prompt 缓存
 
@@ -234,6 +235,7 @@ api.registerContextEngine("tokenizer-threshold", () =>
 | `python/download_bundled_tokenizer.py` | 维护者刷新 bundled 文件                              |
 | `python/requirements.txt`              | `transformers` 依赖                                  |
 | `src/system-prompt-cache.ts`           | system 缓存                                          |
+| `src/tools-schema-cache.ts`            | tools schema token 缓存（llm_input）                 |
 | `src/session-state.ts`                 | 进程内压缩视图                                       |
 | `src/llm-summary.ts`                   | 调 `llm.complete` 的摘要文案                         |
 | `openclaw.plugin.json`                 | 清单 / schema                                        |
@@ -251,9 +253,9 @@ api.registerContextEngine("tokenizer-threshold", () =>
 ## 已知限制
 
 1. 新会话第一次 `assemble` 可能尚未缓存 system prompt。
-2. Tool JSON schema、附件、provider wrapper 不计入本地估计。
-3. `assemble` 内 LLM 无 host 注入的 `abortSignal`（`compact` 路径可带 signal）。
-4. `assemble` 压缩不自动增加 Comped；需 host 再调 `compact()`。
-5. 与真实 provider usage 可能仍有偏差；用实机 usage 校准阈值。
+2. Tool JSON schema 已从 `llm_input` 计入；首次 model call 前仍可能暂缺。
+3. 附件、provider wrapper 等仍可能造成与 `/status` Context 的小偏差。
+4. `assemble` 内 LLM 无 host 注入的 `abortSignal`（`compact` 路径可带 signal）。
+5. `assemble` 压缩不自动增加 Comped；需 host 再调 `compact()`。
 6. 默认 tokenizer 已 bundled；仅自定义其他 HF id 时才需要网络。
 7. 需要本机 Python + `transformers`；worker 崩溃时 Node 回退空白分词计数。

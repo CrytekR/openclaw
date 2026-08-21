@@ -11,6 +11,7 @@ import {
   countMessageTokens,
   countPromptTokens,
   countSystemPromptTokens,
+  countToolsSchemaTokens,
   type TokenCounter,
 } from "./tokenizer.js";
 
@@ -26,14 +27,21 @@ export function computeTokenizerThresholdCompaction(params: {
   summaryOverride?: string;
   /** Cached llm_input system prompt; counted toward the threshold gate. */
   systemPrompt?: string;
+  /** Cached llm_input tool-schema token estimate; counted toward the gate. */
+  toolsSchemaTokens?: number;
 }): EngineCompactComputation {
   const systemPromptTokens = countSystemPromptTokens({
     systemPrompt: params.systemPrompt,
     counter: params.counter,
   });
+  const toolsSchemaTokens = countToolsSchemaTokens({
+    toolsSchemaTokens: params.toolsSchemaTokens,
+    counter: params.counter,
+  });
   const tokensBefore = countPromptTokens({
     messages: params.messages,
     systemPrompt: params.systemPrompt,
+    toolsSchemaTokens,
     counter: params.counter,
   });
 
@@ -66,9 +74,10 @@ export function computeTokenizerThresholdCompaction(params: {
     };
   }
 
-  // Leave headroom in the message budget for the cached system prompt so
-  // summary+tail windowing targets (messages + system) ≈ thresholdTokens.
-  const messageThresholdTokens = Math.max(1, params.thresholdTokens - systemPromptTokens);
+  // Leave headroom in the message budget for cached system + tool schemas so
+  // summary+tail windowing targets (messages + system + tools) ≈ thresholdTokens.
+  const fixedPromptTokens = systemPromptTokens + toolsSchemaTokens;
+  const messageThresholdTokens = Math.max(1, params.thresholdTokens - fixedPromptTokens);
   const assembled = assembleNativeStyleCompactedMessages({
     messages: params.messages,
     thresholdTokens: messageThresholdTokens,
@@ -84,13 +93,13 @@ export function computeTokenizerThresholdCompaction(params: {
     return {
       ...assembled,
       tokensBefore,
-      tokensAfter: assembled.tokensAfter + systemPromptTokens,
+      tokensAfter: assembled.tokensAfter + fixedPromptTokens,
     };
   }
   return {
     ...assembled,
     tokensBefore,
-    tokensAfter: assembled.tokensAfter + systemPromptTokens,
+    tokensAfter: assembled.tokensAfter + fixedPromptTokens,
   };
 }
 

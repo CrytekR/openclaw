@@ -2,14 +2,16 @@
  * Tokenizer-threshold context engine plugin.
  * Owns threshold compaction with agent-core findCutPoint keep-recent tail.
  * Compacts only in assemble via api.runtime.llm.complete (+ extractive fallback).
- * Observes llm_input to cache system prompt tokens for threshold gating.
- * Local token counts use Python transformers (default: deepseek-ai/DeepSeek-V4-Flash).
+ * Observes llm_input to cache system prompt + tool schemas for threshold gating.
+ * Local token counts use Python transformers (default: deepseek-v4-flash bundled).
  */
 import { definePluginEntry } from "openclaw/plugin-sdk/plugin-entry";
 import { Type } from "typebox";
 import { resolveTokenizerThresholdConfig } from "./src/config.js";
 import { createTokenizerThresholdContextEngine } from "./src/engine.js";
 import { rememberSystemPrompt } from "./src/system-prompt-cache.js";
+import { countToolsSchemaTokens, createTokenCounter } from "./src/tokenizer.js";
+import { rememberToolsSchemaTokens, serializeToolsSchema } from "./src/tools-schema-cache.js";
 
 const configSchema = Type.Object(
   {
@@ -32,19 +34,28 @@ export default definePluginEntry({
     const config = resolveTokenizerThresholdConfig(
       (api.pluginConfig ?? {}) as Record<string, unknown>,
     );
+    const counter = createTokenCounter(config);
 
-    // Context-engine assemble cannot see system prompt text. Cache the
-    // provider-bound system prompt from llm_input so threshold gating can
-    // include those tokens. Non-bundled installs need
+    // Context-engine assemble cannot see system prompt or tool schemas. Cache
+    // both from llm_input so threshold gating tracks OpenClaw's displayed
+    // provider prompt pressure more closely. Non-bundled installs need
     // plugins.entries.tokenizer-threshold.hooks.allowConversationAccess=true.
     api.on("llm_input", (event, ctx) => {
-      if (typeof event.systemPrompt !== "string" || !event.systemPrompt.trim()) {
-        return;
+      if (typeof event.systemPrompt === "string" && event.systemPrompt.trim()) {
+        rememberSystemPrompt({
+          sessionId: event.sessionId,
+          sessionKey: ctx.sessionKey,
+          systemPrompt: event.systemPrompt,
+        });
       }
-      rememberSystemPrompt({
+      const toolsSchema = serializeToolsSchema(event.tools);
+      rememberToolsSchemaTokens({
         sessionId: event.sessionId,
         sessionKey: ctx.sessionKey,
-        systemPrompt: event.systemPrompt,
+        tokens: countToolsSchemaTokens({
+          toolsSchema,
+          counter,
+        }),
       });
     });
 
