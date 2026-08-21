@@ -40,7 +40,7 @@ pip install -r extensions/tokenizer-threshold/python/requirements.txt
 python3 extensions/tokenizer-threshold/python/download_bundled_tokenizer.py
 ```
 
-若把 `tokenizerModel` 改成其他 HF id（非 `deepseek-v4-flash` / 非已存在本地目录），才会走 Hugging Face 下载。Node 侧通过持久 Python worker（stdin/stdout JSONL）计数；Vitest 默认用 chars/4 stub，不启动 Python。
+若把 `tokenizerModel` 改成其他 HF id（非 `deepseek-v4-flash` / 非已存在本地目录），才会走 Hugging Face 下载。Node 侧通过持久 Python worker（stdin/stdout JSONL）计数；Vitest 默认用 chars/4 stub，不启动 Python。Node 22+/24 下 pipe 的公开 `.fd` 为 `undefined` 且 fd 为非阻塞，插件通过 libuv handle 取 fd 并对 `EAGAIN` 重试，保持同步计数 API。
 
 ---
 
@@ -239,7 +239,8 @@ api.registerContextEngine("tokenizer-threshold", () =>
 | `src/compact-logic.ts`                 | 阈值门控 + 原生风格组装                              |
 | `src/cut-point.ts`                     | `findCutPoint` 移植                                  |
 | `src/native-compact-assemble.ts`       | 摘要包装 + 保留尾                                    |
-| `src/tokenizer.ts`                     | Node ↔ Python transformers worker                    |
+| `src/tokenizer.ts`                     | TokenCounter + message/prompt counting               |
+| `src/python-worker-ipc.ts`             | Sync JSONL bridge to Python worker (Node 22+/24 fds) |
 | `python/token_counter_server.py`       | 持久 JSONL tokenizer 进程                            |
 | `python/bundled/deepseek-v4-flash/`    | 离线 tokenizer 文件（默认）                          |
 | `python/download_bundled_tokenizer.py` | 维护者刷新 bundled 文件                              |
