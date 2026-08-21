@@ -9,6 +9,7 @@ describe("tokenizer helpers", () => {
     const counter = createTokenCounter(testConfig);
     expect(counter.countText("hello world")).toBeGreaterThan(0);
     expect(counter.countText("")).toBe(0);
+    expect(counter.isDegraded()).toBe(false);
   });
 
   it("extracts text from structured message content", () => {

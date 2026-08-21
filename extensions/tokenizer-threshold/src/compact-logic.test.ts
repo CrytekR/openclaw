@@ -210,4 +210,22 @@ describe("assembleNativeStyleCompactedMessages", () => {
       "超过阈值 200 token，触发压缩",
     );
   });
+
+  it("surfaces tokenizer degradation in the Chinese gate reason", () => {
+    const messages = [
+      { role: "user", content: "word ".repeat(2_000) },
+      { role: "assistant", content: "word ".repeat(2_000) },
+      { role: "user", content: "latest" },
+    ];
+    const result = assembleNativeStyleCompactedMessages({
+      messages,
+      thresholdTokens: 200,
+      counter,
+      keepRecentTokens: 80,
+      tokenizerDegraded: true,
+      countMessageTokens: (msgs) => countMessageTokens({ messages: msgs, counter }),
+    });
+    expect(result.compacted).toBe(true);
+    expect(result.summary).toContain("本地 tokenizer 不可用，当前为估算值");
+  });
 });

@@ -152,6 +152,16 @@ llm_input ──► 缓存 system prompt（sessionId / sessionKey）
 
 > 若曾出现「阈值设 64k，OpenClaw 显示约 130k 才压」：旧版未计 tools schema。升级后应接近 `/status` 的 Context 数；首次 `llm_input` 前仍可能偏矮。
 
+### Tokenizer 失败时可感知
+
+Python worker 启动/计数失败时**不再静默**：
+
+1. Gateway 日志：`api.logger.warn`（约 30s 冷却），提示安装 `transformers` 并用 `~chars/4` 估算。
+2. 压缩摘要触发语追加：`（注意：本地 tokenizer 不可用，当前为估算值。）`
+3. `compact` 结果 `details.tokenizerDegraded: true`（若已降级）。
+
+失败回退从「按空白分词」改为 `~chars/4`（对中文更稳；仍只是估算）。
+
 ### System prompt 缓存
 
 ```ts

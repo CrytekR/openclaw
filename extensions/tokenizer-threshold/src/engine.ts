@@ -92,6 +92,7 @@ function toCompactResult(params: {
   thresholdTokens: number;
   tokenizerModel: TokenizerThresholdConfig["tokenizerModel"];
   tokenBudget?: number;
+  tokenizerDegraded?: boolean;
 }): CompactResult {
   return {
     ok: true,
@@ -105,6 +106,7 @@ function toCompactResult(params: {
         thresholdTokens: params.thresholdTokens,
         tokenizerModel: params.tokenizerModel,
         summaryFromLlm: params.state.summaryFromLlm,
+        ...(params.tokenizerDegraded ? { tokenizerDegraded: true } : {}),
         checkpointTrigger: buildContextEngineCheckpointTrigger({
           currentTokenCount: params.state.tokensBefore,
           thresholdTokens: params.thresholdTokens,
@@ -181,13 +183,15 @@ async function resolveSummaryForCompaction(params: {
 
 export function createTokenizerThresholdContextEngine(params: {
   config: TokenizerThresholdConfig;
+  /** Shared counter from plugin register (warn + degraded state). */
+  counter?: TokenCounter;
   /**
    * Lazy resolver for api.runtime.llm.complete. Invoked from assemble/compact
    * so the runtime facade can be ready after plugin register.
    */
   resolveLlmComplete?: () => RuntimeLlmComplete | undefined;
 }) {
-  const counter = createTokenCounter(params.config);
+  const counter = params.counter ?? createTokenCounter(params.config);
   let compactInFlight: Promise<CompactResult> | null = null;
 
   const runEngineCompaction = (compactParams: {
@@ -264,6 +268,7 @@ export function createTokenizerThresholdContextEngine(params: {
       thresholdTokens: params.config.thresholdTokens,
       tokenizerModel: params.config.tokenizerModel,
       tokenBudget: compactParams.tokenBudget,
+      tokenizerDegraded: counter.isDegraded(),
     });
   };
 
@@ -465,6 +470,7 @@ export function createTokenizerThresholdContextEngine(params: {
               thresholdTokens: params.config.thresholdTokens,
               tokenizerModel: params.config.tokenizerModel,
               tokenBudget: compactParams.tokenBudget,
+              tokenizerDegraded: counter.isDegraded(),
             });
           }
           return {

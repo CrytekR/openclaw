@@ -10,6 +10,13 @@ import type { TokenizerThresholdConfig } from "./config.js";
 
 export type TokenCounter = {
   countText: (text: string) => number;
+  /** True after at least one Python tokenizer failure on this counter. */
+  isDegraded: () => boolean;
+};
+
+export type CreateTokenCounterOptions = {
+  /** Rate-limited operator warning when the Python worker fails. */
+  onWarn?: (message: string) => void;
 };
 
 type WorkerRequest = {
@@ -31,6 +38,10 @@ type WorkerHandles = {
 };
 
 const workers = new Map<string, WorkerHandles>();
+
+/** Approximate chars-per-token when the real tokenizer is unavailable. */
+const FALLBACK_CHARS_PER_TOKEN = 4;
+const WARN_COOLDOWN_MS = 30_000;
 
 function pluginRootDir(): string {
   return join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -130,32 +141,59 @@ function ensureWorker(params: { pythonPath: string; tokenizerModel: string }): W
   return handles;
 }
 
-function whitespaceFallbackCount(text: string): number {
-  const trimmed = text.trim();
-  if (!trimmed) {
-    return 0;
-  }
-  return trimmed.split(/\s+/).filter(Boolean).length;
-}
-
-/** Vitest / TOKENIZER_THRESHOLD_STUB: ~chars/4 so small test budgets stay realistic. */
-function stubCountText(text: string): number {
+/**
+ * Fallback estimate when Python transformers is unavailable.
+ * Prefer ~chars/4 over whitespace splits (awful for CJK).
+ */
+function estimateTokensFallback(text: string): number {
   if (!text) {
     return 0;
   }
-  return Math.max(1, Math.ceil(Array.from(text).length / 4));
+  return Math.max(1, Math.ceil(Array.from(text).length / FALLBACK_CHARS_PER_TOKEN));
+}
+
+/** Vitest / TOKENIZER_THRESHOLD_STUB: same ~chars/4 estimate as the live fallback. */
+function stubCountText(text: string): number {
+  return estimateTokensFallback(text);
 }
 
 /**
  * Count tokens with Hugging Face transformers via a persistent Python worker.
  * Under Vitest / TOKENIZER_THRESHOLD_STUB=1, uses a deterministic char-count stub.
+ * On worker failure: warn (rate-limited), mark degraded, and fall back to ~chars/4.
  */
-export function createTokenCounter(config: TokenizerThresholdConfig): TokenCounter {
+export function createTokenCounter(
+  config: TokenizerThresholdConfig,
+  options: CreateTokenCounterOptions = {},
+): TokenCounter {
   if (process.env.VITEST || process.env.TOKENIZER_THRESHOLD_STUB === "1") {
-    return { countText: stubCountText };
+    return {
+      countText: stubCountText,
+      isDegraded: () => false,
+    };
   }
 
+  let degraded = false;
+  let lastWarnAt = 0;
+  const onWarn = options.onWarn;
+
+  const markDegraded = (reason: string) => {
+    degraded = true;
+    const now = Date.now();
+    if (now - lastWarnAt < WARN_COOLDOWN_MS) {
+      return;
+    }
+    lastWarnAt = now;
+    // Operators must notice silent under/over-counting; cooldown avoids log storms.
+    onWarn?.(
+      `tokenizer-threshold: Python tokenizer unavailable (${reason}); ` +
+        `using ~chars/${FALLBACK_CHARS_PER_TOKEN} estimates until the worker recovers. ` +
+        `Install: pip install 'transformers>=4.51'`,
+    );
+  };
+
   return {
+    isDegraded: () => degraded,
     countText(text: string): number {
       if (!text) {
         return 0;
@@ -171,8 +209,10 @@ export function createTokenCounter(config: TokenizerThresholdConfig): TokenCount
           throw new Error("tokenizer-threshold: worker returned invalid token count");
         }
         return Math.floor(tokens);
-      } catch {
-        return whitespaceFallbackCount(text);
+      } catch (err) {
+        const reason = err instanceof Error ? err.message : String(err);
+        markDegraded(reason);
+        return estimateTokensFallback(text);
       }
     },
   };

@@ -34,7 +34,11 @@ export default definePluginEntry({
     const config = resolveTokenizerThresholdConfig(
       (api.pluginConfig ?? {}) as Record<string, unknown>,
     );
-    const counter = createTokenCounter(config);
+    const counter = createTokenCounter(config, {
+      onWarn: (message) => {
+        api.logger.warn(message);
+      },
+    });
 
     // Context-engine assemble cannot see system prompt or tool schemas. Cache
     // both from llm_input so threshold gating tracks OpenClaw's displayed
@@ -62,6 +66,7 @@ export default definePluginEntry({
     api.registerContextEngine("tokenizer-threshold", () =>
       createTokenizerThresholdContextEngine({
         config,
+        counter,
         // Lazy: runtime.llm may be wired after register; resolve at assemble time.
         resolveLlmComplete: () => {
           const complete = api.runtime?.llm?.complete;

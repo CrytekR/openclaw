@@ -29,10 +29,16 @@ const EXTRACTIVE_PER_MESSAGE_CHARS = 800;
 export function buildCompactionTriggerReason(params: {
   tokensBefore: number;
   thresholdTokens: number;
+  /** When true, local counts came from ~chars/4 fallback after Python failure. */
+  tokenizerDegraded?: boolean;
 }): string {
   const tokensBefore = Math.max(0, Math.floor(params.tokensBefore));
   const thresholdTokens = Math.max(1, Math.floor(params.thresholdTokens));
-  return `上下文长度为 ${tokensBefore} token，超过阈值 ${thresholdTokens} token，触发压缩。`;
+  const base = `上下文长度为 ${tokensBefore} token，超过阈值 ${thresholdTokens} token，触发压缩。`;
+  if (!params.tokenizerDegraded) {
+    return base;
+  }
+  return `${base}（注意：本地 tokenizer 不可用，当前为估算值。）`;
 }
 
 /** Prepend the gate reason once; keep existing reason if already present. */
@@ -40,11 +46,13 @@ export function withCompactionTriggerReason(params: {
   summary: string;
   tokensBefore: number;
   thresholdTokens: number;
+  tokenizerDegraded?: boolean;
 }): string {
   const body = params.summary.trim() || "No prior history.";
   const reason = buildCompactionTriggerReason({
     tokensBefore: params.tokensBefore,
     thresholdTokens: params.thresholdTokens,
+    tokenizerDegraded: params.tokenizerDegraded,
   });
   if (body.startsWith("上下文长度为 ")) {
     return body;
@@ -108,12 +116,14 @@ export function buildCompactionSummaryUserMessage(params: {
   summary: string;
   tokensBefore: number;
   thresholdTokens: number;
+  tokenizerDegraded?: boolean;
   timestamp?: number;
 }): AgentMessage {
   const summary = withCompactionTriggerReason({
     summary: params.summary,
     tokensBefore: params.tokensBefore,
     thresholdTokens: params.thresholdTokens,
+    tokenizerDegraded: params.tokenizerDegraded,
   });
   return {
     role: "user",
@@ -123,6 +133,7 @@ export function buildCompactionSummaryUserMessage(params: {
     __tokenizerThresholdCompaction: {
       tokensBefore: params.tokensBefore,
       thresholdTokens: params.thresholdTokens,
+      ...(params.tokenizerDegraded ? { tokenizerDegraded: true } : {}),
     },
   } as AgentMessage;
 }
@@ -142,11 +153,14 @@ export function assembleNativeStyleCompactedMessages(params: {
    */
   triggerTokensBefore?: number;
   triggerThresholdTokens?: number;
+  /** Surface Python tokenizer failure in the Chinese gate reason. */
+  tokenizerDegraded?: boolean;
   countMessageTokens: (messages: readonly AgentMessage[]) => number;
 }): NativeCompactAssembly {
   const tokensBefore = params.countMessageTokens(params.messages);
   const triggerTokensBefore = params.triggerTokensBefore ?? tokensBefore;
   const triggerThresholdTokens = params.triggerThresholdTokens ?? params.thresholdTokens;
+  const tokenizerDegraded = params.tokenizerDegraded ?? params.counter.isDegraded();
   if (params.messages.length === 0) {
     return {
       compacted: false,
@@ -218,12 +232,14 @@ export function assembleNativeStyleCompactedMessages(params: {
     summary: rawSummary,
     tokensBefore: triggerTokensBefore,
     thresholdTokens: triggerThresholdTokens,
+    tokenizerDegraded,
   });
   const summaryMessage = buildCompactionSummaryUserMessage({
     // Already includes the gate reason; buildCompactionSummaryUserMessage is idempotent.
     summary,
     tokensBefore: triggerTokensBefore,
     thresholdTokens: triggerThresholdTokens,
+    tokenizerDegraded,
   });
 
   let preserved = split.preservedMessages;

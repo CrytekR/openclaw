@@ -47,6 +47,7 @@ export {
   disposeTokenizerWorkers,
   extractMessageText,
   getLocalTokenCounter,
+  type CreateTokenCounterOptions,
   type TokenCounter,
 } from "./src/tokenizer.js";
 export {
