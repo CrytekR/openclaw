@@ -102,6 +102,7 @@ export function normalizeSessionCompactionCheckpointTrigger(
     path !== "overflow_retry" &&
     path !== "timeout_retry" &&
     path !== "auto_threshold" &&
+    path !== "context_engine" &&
     path !== "manual"
   ) {
     return undefined;

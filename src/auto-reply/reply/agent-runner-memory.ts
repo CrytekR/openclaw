@@ -9,7 +9,10 @@ import {
 import { resolveBootstrapWarningSignaturesSeen } from "../../agents/bootstrap-budget.js";
 import { estimateMessagesTokens } from "../../agents/compaction.js";
 import { classifyCompactionReason } from "../../agents/embedded-agent-runner/compact-reasons.js";
-import { buildCheckpointTriggerFromPreflightDetails } from "../../agents/embedded-agent-runner/compaction-checkpoint-trigger.js";
+import {
+  buildCheckpointTriggerFromPreflightDetails,
+  type CompactionCheckpointPreflightDetails,
+} from "../../agents/embedded-agent-runner/compaction-checkpoint-trigger.js";
 import { resolveAgentHarnessPolicy } from "../../agents/harness/policy.js";
 import { ensureSelectedAgentHarnessPlugin } from "../../agents/harness/runtime-plugin.js";
 import { runWithModelFallback } from "../../agents/model-fallback.js";
@@ -849,7 +852,11 @@ export async function runPreflightCompactionIfNeeded(params: {
     return entry ?? params.sessionEntry;
   }
 
-  const compactionTrigger = shouldCompactByTranscriptBytes ? "transcript_bytes" : "tokens";
+  // Keep the literal union so checkpoint/preflight fields stay typed; a plain
+  // object literal would widen trigger to string and fail plugin-sdk dts.
+  const compactionTrigger: "transcript_bytes" | "tokens" = shouldCompactByTranscriptBytes
+    ? "transcript_bytes"
+    : "tokens";
   const projectedBreakdown =
     typeof transcriptPromptTokens === "number"
       ? {
@@ -873,7 +880,7 @@ export async function runPreflightCompactionIfNeeded(params: {
               baseTokens: Math.floor(stalePersistedPromptTokens),
             }
           : undefined;
-  const compactionDetails = {
+  const compactionDetails: CompactionCheckpointPreflightDetails = {
     trigger: compactionTrigger,
     ...(typeof tokenCountForCompaction === "number"
       ? { projectedTokens: tokenCountForCompaction }

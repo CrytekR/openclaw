@@ -64,6 +64,24 @@ describe("compaction-checkpoint-trigger", () => {
     });
   });
 
+  it("keeps context-engine threshold trigger snapshots", () => {
+    expect(
+      normalizeSessionCompactionCheckpointTrigger({
+        path: "context_engine",
+        trigger: "threshold",
+        projectedTokens: 120_500,
+        thresholdTokens: 113_000,
+        contextWindowTokens: 200_000,
+      }),
+    ).toEqual({
+      path: "context_engine",
+      trigger: "threshold",
+      projectedTokens: 120_500,
+      thresholdTokens: 113_000,
+      contextWindowTokens: 200_000,
+    });
+  });
+
   it("prefers an explicit checkpointTrigger over inferred params", () => {
     expect(
       resolveCompactionCheckpointTriggerFromParams({

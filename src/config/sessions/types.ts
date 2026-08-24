@@ -78,6 +78,7 @@ export type SessionCompactionCheckpointTriggerPath =
   | "overflow_retry"
   | "timeout_retry"
   | "auto_threshold"
+  | "context_engine"
   | "manual";
 
 /** Additive terms that produced a preflight projected-token count. */
@@ -105,6 +106,7 @@ export type SessionCompactionCheckpointProjectedBreakdown = {
  * - char_overflow_guard: estimatedContextChars / maxContextChars
  * - overflow_retry: observedOverflowTokens / compactionTokens / contextWindowTokens
  * - timeout_retry: promptTokens / thresholdTokens (65% window) / contextWindowTokens
+ * - context_engine: projectedTokens / thresholdTokens from a context-engine gate
  */
 export type SessionCompactionCheckpointTrigger = {
   path: SessionCompactionCheckpointTriggerPath;

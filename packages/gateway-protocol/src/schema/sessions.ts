@@ -28,6 +28,7 @@ const SessionCompactionCheckpointTriggerPathSchema = Type.Union([
   Type.Literal("overflow_retry"),
   Type.Literal("timeout_retry"),
   Type.Literal("auto_threshold"),
+  Type.Literal("context_engine"),
   Type.Literal("manual"),
 ]);
 

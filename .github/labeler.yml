@@ -309,6 +309,10 @@
   - changed-files:
       - any-glob-to-any-file:
           - "extensions/memory-wiki/**"
+"extensions: tokenizer-threshold":
+  - changed-files:
+      - any-glob-to-any-file:
+          - "extensions/tokenizer-threshold/**"
 "extensions: oc-path":
   - changed-files:
       - any-glob-to-any-file:

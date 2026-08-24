@@ -1,0 +1,16 @@
+{
+  "name": "@openclaw/tokenizer-threshold",
+  "version": "2026.6.6",
+  "private": true,
+  "description": "Context engine that counts tokens with Python transformers (DeepSeek-V4-Flash) and compacts at a fixed threshold",
+  "type": "module",
+  "dependencies": {
+    "typebox": "1.1.39"
+  },
+  "devDependencies": {
+    "@openclaw/plugin-sdk": "workspace:*"
+  },
+  "openclaw": {
+    "extensions": ["./index.ts"]
+  }
+}

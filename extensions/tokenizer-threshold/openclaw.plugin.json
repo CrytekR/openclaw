@@ -1,0 +1,53 @@
+{
+  "id": "tokenizer-threshold",
+  "activation": {
+    "onStartup": true
+  },
+  "kind": "context-engine",
+  "name": "Tokenizer Threshold Context Engine",
+  "description": "Own threshold compaction with agent-core findCutPoint keep-recent tail (default 113k / 20k); Python transformers tokenizer (DeepSeek-V4-Flash); report tokensBefore/tokensAfter to host checkpoints.",
+  "uiHints": {
+    "thresholdTokens": {
+      "label": "Compaction threshold (tokens)",
+      "help": "When local tokenizer counts reach this value, assemble returns a summary message plus a keepRecentTokens verbatim tail under the budget."
+    },
+    "tokenizerModel": {
+      "label": "Tokenizer model",
+      "help": "Bundled alias deepseek-v4-flash (offline), a local tokenizer directory, or another Hugging Face model id."
+    },
+    "pythonPath": {
+      "label": "Python executable",
+      "help": "Python used to run the persistent transformers token-counter worker (default python3)."
+    },
+    "keepRecentTokens": {
+      "label": "Keep recent tokens",
+      "help": "Approximate recent-context token budget kept verbatim after the summary (agent-core findCutPoint default: 20000)."
+    }
+  },
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "thresholdTokens": {
+        "type": "integer",
+        "minimum": 1,
+        "default": 113000
+      },
+      "tokenizerModel": {
+        "type": "string",
+        "minLength": 1,
+        "default": "deepseek-v4-flash"
+      },
+      "pythonPath": {
+        "type": "string",
+        "minLength": 1,
+        "default": "python3"
+      },
+      "keepRecentTokens": {
+        "type": "integer",
+        "minimum": 1,
+        "default": 20000
+      }
+    }
+  }
+}

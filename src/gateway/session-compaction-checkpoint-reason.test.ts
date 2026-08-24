@@ -142,4 +142,20 @@ describe("resolveSessionCompactionCheckpointReason", () => {
       }),
     ).toBe("Manual contextWindowTokens=200000");
   });
+
+  it("formats context-engine threshold gates with local count and threshold", () => {
+    expect(
+      resolveSessionCompactionCheckpointReason({
+        checkpointTrigger: {
+          path: "context_engine",
+          trigger: "threshold",
+          projectedTokens: 120_500,
+          thresholdTokens: 113_000,
+          contextWindowTokens: 200_000,
+        },
+      }),
+    ).toBe(
+      "Context engine projectedTokens=120500 thresholdTokens=113000 contextWindowTokens=200000",
+    );
+  });
 });

@@ -282,14 +282,14 @@ function isProjectableCompactionCheckpoint(
     createdAt?: unknown;
     reason?: unknown;
   };
+  // `reason` is an operator-facing freeform string (path label + optional gate
+  // calc fields). Accept any non-empty string, including legacy short codes.
   return (
     Boolean(normalizeOptionalString(checkpoint.checkpointId)) &&
     typeof checkpoint.createdAt === "number" &&
     Number.isFinite(checkpoint.createdAt) &&
-    (checkpoint.reason === "manual" ||
-      checkpoint.reason === "auto-threshold" ||
-      checkpoint.reason === "overflow-retry" ||
-      checkpoint.reason === "timeout-retry")
+    typeof checkpoint.reason === "string" &&
+    Boolean(checkpoint.reason.trim())
   );
 }
 
