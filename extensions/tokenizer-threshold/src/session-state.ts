@@ -17,7 +17,31 @@ export type TokenizerThresholdSessionState = {
   summary: string;
   /** True when summary came from runtimeContext.llm rather than extractive text. */
   summaryFromLlm: boolean;
+  /**
+   * How many times this session's context engine has triggered compaction.
+   * Increments when the summarizable fingerprint changes (a new gate event).
+   */
+  compactionTriggerCount: number;
 };
+
+/**
+ * Next trigger count for this session: keep the existing count when reusing the
+ * same summarizable fingerprint; otherwise increment.
+ */
+export function nextCompactionTriggerCount(params: {
+  existing?: TokenizerThresholdSessionState;
+  summarizableFingerprint: string;
+}): number {
+  const previous = Math.max(0, Math.floor(params.existing?.compactionTriggerCount ?? 0));
+  if (
+    params.existing &&
+    params.existing.summarizableFingerprint === params.summarizableFingerprint &&
+    previous > 0
+  ) {
+    return previous;
+  }
+  return previous + 1;
+}
 
 const sessionStates = new Map<string, TokenizerThresholdSessionState>();
 

@@ -121,7 +121,7 @@ llm_input ──► 缓存 system prompt（sessionId / sessionKey）
 5. 写入进程内 `session-state`，供后续 `assemble` 复用与 `compact` 回报。
 6. **不写** transcript / `sessions.json`。
 
-注意：`assemble` 在「下一轮模型调用前」执行；其中的 LLM 摘要会**增加延迟与费用**。这是本设计的显式取舍。首次（或 worker 重启后）会加载 bundled tokenizer（本地磁盘，不联网）。
+注意：`assemble` 在「下一轮模型调用前」执行；其中的 LLM 摘要会**增加延迟与费用**。这是本设计的显式取舍。首次（或 worker 重启后）会加载 bundled tokenizer（本地磁盘，不联网）。压缩摘要开头会写明本地 token 数、阈值，以及本会话 context engine **第 N 次**触发压缩（同一 summarizable 指纹复用时不递增）。
 
 ### `afterTurn`
 

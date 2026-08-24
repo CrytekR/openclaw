@@ -28,6 +28,7 @@ export {
 export {
   clearSessionCompactionState,
   getSessionCompactionState,
+  nextCompactionTriggerCount,
   resetTokenizerThresholdSessionStatesForTest,
   resolveSessionStateKey,
   setSessionCompactionState,

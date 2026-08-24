@@ -118,12 +118,12 @@ describe("computeTokenizerThresholdCompaction", () => {
     expect(result.tokensAfter).toBeLessThan(result.tokensBefore);
     expect(result.messages.at(-1)).toMatchObject({ role: "user", content: "latest" });
     expect(result.summary).toContain("Extractive compaction");
-    expect(result.summary).toContain("超过阈值 200 token，触发压缩");
+    expect(result.summary).toContain("超过阈值 200 token，第 1 次触发压缩");
     const first = result.messages[0] as { role?: string; content?: string };
     expect(first.role).toBe("user");
     expect(String(first.content)).toContain(COMPACTION_SUMMARY_PREFIX.trim());
     expect(String(first.content)).toContain(COMPACTION_SUMMARY_SUFFIX.trim());
-    expect(String(first.content)).toContain("超过阈值 200 token，触发压缩");
+    expect(String(first.content)).toContain("超过阈值 200 token，第 1 次触发压缩");
   });
 
   it("counts cached system prompt toward the threshold gate", () => {
@@ -202,12 +202,12 @@ describe("assembleNativeStyleCompactedMessages", () => {
     });
     expect(result.compacted).toBe(true);
     expect(result.summary).toContain("LLM summary of earlier work");
-    expect(result.summary).toContain("超过阈值 200 token，触发压缩");
+    expect(result.summary).toContain("超过阈值 200 token，第 1 次触发压缩");
     expect(String((result.messages[0] as { content?: string }).content)).toContain(
       "LLM summary of earlier work",
     );
     expect(String((result.messages[0] as { content?: string }).content)).toContain(
-      "超过阈值 200 token，触发压缩",
+      "超过阈值 200 token，第 1 次触发压缩",
     );
   });
 
@@ -227,5 +227,24 @@ describe("assembleNativeStyleCompactedMessages", () => {
     });
     expect(result.compacted).toBe(true);
     expect(result.summary).toContain("本地 tokenizer 不可用，当前为估算值");
+    expect(result.summary).toContain("第 1 次触发压缩");
+  });
+
+  it("honors an explicit compactionTriggerCount in the gate reason", () => {
+    const messages = [
+      { role: "user", content: "word ".repeat(2_000) },
+      { role: "assistant", content: "word ".repeat(2_000) },
+      { role: "user", content: "latest" },
+    ];
+    const result = assembleNativeStyleCompactedMessages({
+      messages,
+      thresholdTokens: 200,
+      counter,
+      keepRecentTokens: 80,
+      compactionTriggerCount: 3,
+      countMessageTokens: (msgs) => countMessageTokens({ messages: msgs, counter }),
+    });
+    expect(result.compacted).toBe(true);
+    expect(result.summary).toContain("第 3 次触发压缩");
   });
 });

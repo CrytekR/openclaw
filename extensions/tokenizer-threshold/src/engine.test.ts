@@ -61,7 +61,71 @@ describe("createTokenizerThresholdContextEngine", () => {
     const first = assembled.messages[0] as { role?: string; content?: string };
     expect(first.role).toBe("user");
     expect(String(first.content)).toContain(COMPACTION_SUMMARY_PREFIX.trim());
-    expect(String(first.content)).toContain("超过阈值 200 token，触发压缩");
+    expect(String(first.content)).toContain("超过阈值 200 token，第 1 次触发压缩");
+  });
+
+  it("increments context-engine compaction trigger count across new summarizable prefixes", async () => {
+    const engine = createTokenizerThresholdContextEngine({
+      config: {
+        thresholdTokens: 200,
+        tokenizerModel: "deepseek-v4-flash",
+        pythonPath: "python3",
+        keepRecentTokens: 80,
+      },
+    });
+
+    const firstBatch = [
+      { role: "user", content: "alpha ".repeat(2_000) },
+      { role: "assistant", content: "beta ".repeat(2_000) },
+      { role: "user", content: "latest-1" },
+    ] as const;
+    const first = await engine.assemble({
+      sessionId: "s-count",
+      sessionKey: "agent:main:count",
+      messages: [...firstBatch],
+    });
+    expect(String((first.messages[0] as { content?: string }).content)).toContain(
+      "第 1 次触发压缩",
+    );
+
+    // Same summarizable prefix → reuse, count stays at 1.
+    const reused = await engine.assemble({
+      sessionId: "s-count",
+      sessionKey: "agent:main:count",
+      messages: [...firstBatch],
+    });
+    expect(String((reused.messages[0] as { content?: string }).content)).toContain(
+      "第 1 次触发压缩",
+    );
+    expect(String((reused.messages[0] as { content?: string }).content)).not.toContain(
+      "第 2 次触发压缩",
+    );
+
+    // New oversized history changes the summarizable fingerprint → count 2.
+    const secondBatch = [
+      { role: "user", content: "gamma ".repeat(2_000) },
+      { role: "assistant", content: "delta ".repeat(2_000) },
+      { role: "user", content: "epsilon ".repeat(2_000) },
+      { role: "assistant", content: "zeta ".repeat(2_000) },
+      { role: "user", content: "latest-2" },
+    ] as const;
+    const second = await engine.assemble({
+      sessionId: "s-count",
+      sessionKey: "agent:main:count",
+      messages: [...secondBatch],
+    });
+    expect(String((second.messages[0] as { content?: string }).content)).toContain(
+      "第 2 次触发压缩",
+    );
+
+    const compactResult = await engine.compact({
+      sessionId: "s-count",
+      sessionKey: "agent:main:count",
+      sessionFile: "/tmp/session.jsonl",
+      force: true,
+    });
+    expect(compactResult.result?.details).toMatchObject({ compactionTriggerCount: 2 });
+    expect(compactResult.result?.summary).toContain("第 2 次触发压缩");
   });
 
   it("reports tokenizer estimates for short assemble prompts", async () => {
@@ -181,7 +245,7 @@ describe("createTokenizerThresholdContextEngine", () => {
     });
     expect(assembled.messages).not.toEqual([...messages]);
     expect(String((assembled.messages[0] as { content?: string }).content)).toContain(
-      `超过阈值 ${thresholdTokens} token，触发压缩`,
+      `超过阈值 ${thresholdTokens} token，第 1 次触发压缩`,
     );
   });
 
@@ -218,7 +282,7 @@ describe("createTokenizerThresholdContextEngine", () => {
       force: true,
     });
     expect(compactResult.result?.summary).toContain("LLM distilled earlier context");
-    expect(compactResult.result?.summary).toContain("超过阈值 200 token，触发压缩");
+    expect(compactResult.result?.summary).toContain("超过阈值 200 token，第 1 次触发压缩");
     expect(compactResult.result?.details).toMatchObject({ summaryFromLlm: true });
   });
 
@@ -301,6 +365,7 @@ describe("createTokenizerThresholdContextEngine", () => {
         tokensAfter: expect.any(Number),
         details: {
           engine: "tokenizer-threshold",
+          compactionTriggerCount: 1,
           checkpointTrigger: {
             path: "context_engine",
             trigger: "threshold",

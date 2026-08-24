@@ -25,38 +25,55 @@ export const COMPACTION_SUMMARY_SUFFIX = `
 const EXTRACTIVE_MAX_CHARS = 12_000;
 const EXTRACTIVE_PER_MESSAGE_CHARS = 800;
 
+/** Strip a leading Chinese gate-reason line so callers can rebuild it. */
+export function stripCompactionTriggerReason(summary: string): string {
+  const trimmed = summary.trim();
+  if (!trimmed.startsWith("上下文长度为 ")) {
+    return trimmed;
+  }
+  const splitAt = trimmed.indexOf("\n\n");
+  if (splitAt === -1) {
+    return "";
+  }
+  return trimmed.slice(splitAt + 2).trim();
+}
+
 /** Human-readable gate reason prepended to compaction summary bodies. */
 export function buildCompactionTriggerReason(params: {
   tokensBefore: number;
   thresholdTokens: number;
+  /** 1-based count of context-engine compaction triggers for this session. */
+  compactionTriggerCount?: number;
   /** When true, local counts came from ~chars/4 fallback after Python failure. */
   tokenizerDegraded?: boolean;
 }): string {
   const tokensBefore = Math.max(0, Math.floor(params.tokensBefore));
   const thresholdTokens = Math.max(1, Math.floor(params.thresholdTokens));
-  const base = `上下文长度为 ${tokensBefore} token，超过阈值 ${thresholdTokens} token，触发压缩。`;
+  const triggerCount = Math.max(1, Math.floor(params.compactionTriggerCount ?? 1));
+  const base =
+    `上下文长度为 ${tokensBefore} token，超过阈值 ${thresholdTokens} token，` +
+    `第 ${triggerCount} 次触发压缩。`;
   if (!params.tokenizerDegraded) {
     return base;
   }
   return `${base}（注意：本地 tokenizer 不可用，当前为估算值。）`;
 }
 
-/** Prepend the gate reason once; keep existing reason if already present. */
+/** Prepend (or refresh) the gate reason ahead of the summary body. */
 export function withCompactionTriggerReason(params: {
   summary: string;
   tokensBefore: number;
   thresholdTokens: number;
+  compactionTriggerCount?: number;
   tokenizerDegraded?: boolean;
 }): string {
-  const body = params.summary.trim() || "No prior history.";
+  const body = stripCompactionTriggerReason(params.summary) || "No prior history.";
   const reason = buildCompactionTriggerReason({
     tokensBefore: params.tokensBefore,
     thresholdTokens: params.thresholdTokens,
+    compactionTriggerCount: params.compactionTriggerCount,
     tokenizerDegraded: params.tokenizerDegraded,
   });
-  if (body.startsWith("上下文长度为 ")) {
-    return body;
-  }
   return `${reason}\n\n${body}`;
 }
 
@@ -116,13 +133,16 @@ export function buildCompactionSummaryUserMessage(params: {
   summary: string;
   tokensBefore: number;
   thresholdTokens: number;
+  compactionTriggerCount?: number;
   tokenizerDegraded?: boolean;
   timestamp?: number;
 }): AgentMessage {
+  const triggerCount = Math.max(1, Math.floor(params.compactionTriggerCount ?? 1));
   const summary = withCompactionTriggerReason({
     summary: params.summary,
     tokensBefore: params.tokensBefore,
     thresholdTokens: params.thresholdTokens,
+    compactionTriggerCount: triggerCount,
     tokenizerDegraded: params.tokenizerDegraded,
   });
   return {
@@ -133,6 +153,7 @@ export function buildCompactionSummaryUserMessage(params: {
     __tokenizerThresholdCompaction: {
       tokensBefore: params.tokensBefore,
       thresholdTokens: params.thresholdTokens,
+      compactionTriggerCount: triggerCount,
       ...(params.tokenizerDegraded ? { tokenizerDegraded: true } : {}),
     },
   } as AgentMessage;
@@ -153,6 +174,8 @@ export function assembleNativeStyleCompactedMessages(params: {
    */
   triggerTokensBefore?: number;
   triggerThresholdTokens?: number;
+  /** 1-based context-engine trigger count shown in the Chinese gate reason. */
+  compactionTriggerCount?: number;
   /** Surface Python tokenizer failure in the Chinese gate reason. */
   tokenizerDegraded?: boolean;
   countMessageTokens: (messages: readonly AgentMessage[]) => number;
@@ -160,6 +183,7 @@ export function assembleNativeStyleCompactedMessages(params: {
   const tokensBefore = params.countMessageTokens(params.messages);
   const triggerTokensBefore = params.triggerTokensBefore ?? tokensBefore;
   const triggerThresholdTokens = params.triggerThresholdTokens ?? params.thresholdTokens;
+  const compactionTriggerCount = Math.max(1, Math.floor(params.compactionTriggerCount ?? 1));
   const tokenizerDegraded = params.tokenizerDegraded ?? params.counter.isDegraded();
   if (params.messages.length === 0) {
     return {
@@ -232,6 +256,7 @@ export function assembleNativeStyleCompactedMessages(params: {
     summary: rawSummary,
     tokensBefore: triggerTokensBefore,
     thresholdTokens: triggerThresholdTokens,
+    compactionTriggerCount,
     tokenizerDegraded,
   });
   const summaryMessage = buildCompactionSummaryUserMessage({
@@ -239,6 +264,7 @@ export function assembleNativeStyleCompactedMessages(params: {
     summary,
     tokensBefore: triggerTokensBefore,
     thresholdTokens: triggerThresholdTokens,
+    compactionTriggerCount,
     tokenizerDegraded,
   });
 

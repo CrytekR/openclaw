@@ -29,6 +29,8 @@ export function computeTokenizerThresholdCompaction(params: {
   systemPrompt?: string;
   /** Cached llm_input tool-schema token estimate; counted toward the gate. */
   toolsSchemaTokens?: number;
+  /** 1-based context-engine compaction trigger count for the summary reason. */
+  compactionTriggerCount?: number;
 }): EngineCompactComputation {
   const systemPromptTokens = countSystemPromptTokens({
     systemPrompt: params.systemPrompt,
@@ -87,6 +89,7 @@ export function computeTokenizerThresholdCompaction(params: {
     // Gate reason in the summary body uses full prompt pressure + configured threshold.
     triggerTokensBefore: tokensBefore,
     triggerThresholdTokens: params.thresholdTokens,
+    compactionTriggerCount: params.compactionTriggerCount,
     tokenizerDegraded: params.counter.isDegraded(),
     countMessageTokens: (messages) => countMessageTokens({ messages, counter: params.counter }),
   });

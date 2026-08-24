@@ -19,6 +19,7 @@ import { summarizeWithRuntimeLlm } from "./llm-summary.js";
 import {
   fingerprintSummarizableMessages,
   getSessionCompactionState,
+  nextCompactionTriggerCount,
   resolveSessionStateKey,
   setSessionCompactionState,
   type TokenizerThresholdSessionState,
@@ -106,6 +107,7 @@ function toCompactResult(params: {
         thresholdTokens: params.thresholdTokens,
         tokenizerModel: params.tokenizerModel,
         summaryFromLlm: params.state.summaryFromLlm,
+        compactionTriggerCount: params.state.compactionTriggerCount,
         ...(params.tokenizerDegraded ? { tokenizerDegraded: true } : {}),
         checkpointTrigger: buildContextEngineCheckpointTrigger({
           currentTokenCount: params.state.tokensBefore,
@@ -224,6 +226,10 @@ export function createTokenizerThresholdContextEngine(params: {
       keepRecentTokens: params.config.keepRecentTokens,
       counter,
     });
+    const compactionTriggerCount = nextCompactionTriggerCount({
+      existing: getSessionCompactionState(stateKey),
+      summarizableFingerprint: reusable.summarizableFingerprint,
+    });
     const summaryOverride = compactParams.summaryOverride?.trim() || reusable.summary;
     const computation = computeTokenizerThresholdCompaction({
       messages: compactParams.messages,
@@ -234,6 +240,7 @@ export function createTokenizerThresholdContextEngine(params: {
       summaryOverride,
       systemPrompt,
       toolsSchemaTokens,
+      compactionTriggerCount,
     });
     if (!computation.compacted) {
       return {
@@ -261,6 +268,7 @@ export function createTokenizerThresholdContextEngine(params: {
       tokensAfter: computation.tokensAfter,
       summary: computation.summary,
       summaryFromLlm,
+      compactionTriggerCount,
     };
     setSessionCompactionState(stateKey, state);
     return toCompactResult({
@@ -348,6 +356,10 @@ export function createTokenizerThresholdContextEngine(params: {
         keepRecentTokens: params.config.keepRecentTokens,
         counter,
       });
+      const compactionTriggerCount = nextCompactionTriggerCount({
+        existing: getSessionCompactionState(stateKey),
+        summarizableFingerprint: reusable.summarizableFingerprint,
+      });
       const resolved = await resolveSummaryForCompaction({
         messages: assembleParams.messages,
         keepRecentTokens: params.config.keepRecentTokens,
@@ -364,6 +376,7 @@ export function createTokenizerThresholdContextEngine(params: {
         summaryOverride: resolved.summary,
         systemPrompt,
         toolsSchemaTokens,
+        compactionTriggerCount,
       });
 
       if (computation.compacted) {
@@ -382,6 +395,7 @@ export function createTokenizerThresholdContextEngine(params: {
             resolvedBody &&
             (computation.summary === resolvedBody || computation.summary.includes(resolvedBody)),
           ),
+          compactionTriggerCount,
         };
         setSessionCompactionState(stateKey, state);
       }
