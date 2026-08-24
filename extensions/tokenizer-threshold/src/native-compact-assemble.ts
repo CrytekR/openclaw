@@ -5,8 +5,8 @@
  * assembles:
  *   [user message wrapping <summary>...</summary>] + preserved contiguous tail
  *
- * Summary text may be extractive (assemble) or LLM-produced (afterTurn/compact
- * when runtimeContext.llm is available).
+ * Summary text may be extractive or LLM-produced via api.runtime.llm.complete
+ * (resolved at assemble/compact time).
  */
 import type { AgentMessage } from "openclaw/plugin-sdk/agent-harness-runtime";
 import { splitMessagesAtCutPoint } from "./cut-point.js";
@@ -136,7 +136,7 @@ export function buildCompactionSummaryUserMessage(params: {
   compactionTriggerCount?: number;
   tokenizerDegraded?: boolean;
   timestamp?: number;
-}): AgentMessage {
+}): { summary: string; message: AgentMessage } {
   const triggerCount = Math.max(1, Math.floor(params.compactionTriggerCount ?? 1));
   const summary = withCompactionTriggerReason({
     summary: params.summary,
@@ -146,17 +146,20 @@ export function buildCompactionSummaryUserMessage(params: {
     tokenizerDegraded: params.tokenizerDegraded,
   });
   return {
-    role: "user",
-    content: COMPACTION_SUMMARY_PREFIX + summary + COMPACTION_SUMMARY_SUFFIX,
-    timestamp: params.timestamp ?? Date.now(),
-    // Diagnostic only; providers ignore unknown fields.
-    __tokenizerThresholdCompaction: {
-      tokensBefore: params.tokensBefore,
-      thresholdTokens: params.thresholdTokens,
-      compactionTriggerCount: triggerCount,
-      ...(params.tokenizerDegraded ? { tokenizerDegraded: true } : {}),
-    },
-  } as AgentMessage;
+    summary,
+    message: {
+      role: "user",
+      content: COMPACTION_SUMMARY_PREFIX + summary + COMPACTION_SUMMARY_SUFFIX,
+      timestamp: params.timestamp ?? Date.now(),
+      // Diagnostic only; providers ignore unknown fields.
+      __tokenizerThresholdCompaction: {
+        tokensBefore: params.tokensBefore,
+        thresholdTokens: params.thresholdTokens,
+        compactionTriggerCount: triggerCount,
+        ...(params.tokenizerDegraded ? { tokenizerDegraded: true } : {}),
+      },
+    } as AgentMessage,
+  };
 }
 
 /** Assemble native-shaped compacted prompt messages under a local token threshold. */
@@ -252,16 +255,8 @@ export function assembleNativeStyleCompactedMessages(params: {
       maxChars: extractiveMaxChars,
       perMessageChars: extractivePerMessageChars,
     });
-  const summary = withCompactionTriggerReason({
+  const { summary, message: summaryMessage } = buildCompactionSummaryUserMessage({
     summary: rawSummary,
-    tokensBefore: triggerTokensBefore,
-    thresholdTokens: triggerThresholdTokens,
-    compactionTriggerCount,
-    tokenizerDegraded,
-  });
-  const summaryMessage = buildCompactionSummaryUserMessage({
-    // Already includes the gate reason; buildCompactionSummaryUserMessage is idempotent.
-    summary,
     tokensBefore: triggerTokensBefore,
     thresholdTokens: triggerThresholdTokens,
     compactionTriggerCount,

@@ -111,7 +111,6 @@ describe("computeTokenizerThresholdCompaction", () => {
       ],
       thresholdTokens: 200,
       counter,
-      force: true,
       keepRecentTokens: 80,
     });
     expect(result.compacted).toBe(true);

@@ -1,10 +1,10 @@
 /**
  * Process-local cache of the latest llm_input system prompt per session.
  *
- * Context-engine assemble/afterTurn do not receive system prompt text. The
- * plugin registers an llm_input hook that fills this map so threshold gating
- * can add system tokens to the local message count. First assemble of a turn
- * may still miss a cache entry until the first model call of that session.
+ * Context-engine assemble does not receive system prompt text. The plugin
+ * registers an llm_input hook that fills this map so threshold gating can add
+ * system tokens to the local message count. First assemble of a turn may still
+ * miss a cache entry until the first model call of that session.
  */
 
 const systemPromptBySession = new Map<string, string>();

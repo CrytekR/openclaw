@@ -13,8 +13,9 @@
  */
 import type { AgentMessage } from "openclaw/plugin-sdk/agent-harness-runtime";
 import { buildMemorySystemPromptAddition } from "openclaw/plugin-sdk/core";
-import { computeTokenizerThresholdCompaction, splitMessagesAtCutPoint } from "./compact-logic.js";
+import { computeTokenizerThresholdCompaction } from "./compact-logic.js";
 import type { TokenizerThresholdConfig } from "./config.js";
+import { splitMessagesAtCutPoint } from "./cut-point.js";
 import { summarizeWithRuntimeLlm } from "./llm-summary.js";
 import {
   fingerprintSummarizableMessages,
@@ -48,26 +49,6 @@ export type RuntimeLlmComplete = (params: {
   purpose?: string;
   signal?: AbortSignal;
 }) => Promise<{ text: string }>;
-
-function resolveCachedSystemPrompt(params: {
-  sessionId: string;
-  sessionKey?: string;
-}): string | undefined {
-  return getCachedSystemPrompt({
-    sessionId: params.sessionId,
-    sessionKey: params.sessionKey,
-  });
-}
-
-function resolveCachedToolsSchemaTokens(params: {
-  sessionId: string;
-  sessionKey?: string;
-}): number {
-  return getCachedToolsSchemaTokens({
-    sessionId: params.sessionId,
-    sessionKey: params.sessionKey,
-  });
-}
 
 /** Build the checkpoint trigger snapshot for plugin-owned threshold compaction. */
 export function buildContextEngineCheckpointTrigger(params: {
@@ -117,6 +98,53 @@ function toCompactResult(params: {
       },
     },
   };
+}
+
+function inferSummaryFromLlm(params: {
+  summaryFromLlmHint?: boolean;
+  summaryOverride?: string;
+  reusableSummary?: string;
+  reusableSummaryFromLlm: boolean;
+  computationSummary: string;
+}): boolean {
+  const overrideBody = params.summaryOverride?.trim() ?? "";
+  return Boolean(
+    params.summaryFromLlmHint ||
+    (overrideBody &&
+      params.reusableSummaryFromLlm &&
+      (params.reusableSummary === params.summaryOverride ||
+        params.computationSummary === overrideBody ||
+        params.computationSummary.includes(overrideBody))),
+  );
+}
+
+function persistCompactionState(params: {
+  stateKey: string;
+  sourceMessages: AgentMessage[];
+  computation: {
+    summarizableCount: number;
+    messages: AgentMessage[];
+    tokensBefore: number;
+    tokensAfter: number;
+    summary: string;
+  };
+  summarizableFingerprint: string;
+  compactionTriggerCount: number;
+  summaryFromLlm: boolean;
+}): TokenizerThresholdSessionState {
+  const state: TokenizerThresholdSessionState = {
+    compactedSourceLength: params.sourceMessages.length,
+    summarizableCount: params.computation.summarizableCount,
+    summarizableFingerprint: params.summarizableFingerprint,
+    compactedMessages: params.computation.messages,
+    tokensBefore: params.computation.tokensBefore,
+    tokensAfter: params.computation.tokensAfter,
+    summary: params.computation.summary,
+    summaryFromLlm: params.summaryFromLlm,
+    compactionTriggerCount: params.compactionTriggerCount,
+  };
+  setSessionCompactionState(params.stateKey, state);
+  return state;
 }
 
 function resolveReusableSummary(params: {
@@ -200,7 +228,6 @@ export function createTokenizerThresholdContextEngine(params: {
     sessionId: string;
     sessionKey?: string;
     messages: AgentMessage[];
-    force?: boolean;
     tokenBudget?: number;
     summaryOverride?: string;
     summaryFromLlm?: boolean;
@@ -212,11 +239,11 @@ export function createTokenizerThresholdContextEngine(params: {
     });
     const systemPrompt =
       compactParams.systemPrompt ??
-      resolveCachedSystemPrompt({
+      getCachedSystemPrompt({
         sessionId: compactParams.sessionId,
         sessionKey: compactParams.sessionKey,
       });
-    const toolsSchemaTokens = resolveCachedToolsSchemaTokens({
+    const toolsSchemaTokens = getCachedToolsSchemaTokens({
       sessionId: compactParams.sessionId,
       sessionKey: compactParams.sessionKey,
     });
@@ -235,7 +262,6 @@ export function createTokenizerThresholdContextEngine(params: {
       messages: compactParams.messages,
       thresholdTokens: params.config.thresholdTokens,
       counter,
-      force: compactParams.force,
       keepRecentTokens: params.config.keepRecentTokens,
       summaryOverride,
       systemPrompt,
@@ -250,27 +276,20 @@ export function createTokenizerThresholdContextEngine(params: {
       };
     }
 
-    const overrideBody = summaryOverride?.trim() ?? "";
-    const summaryFromLlm = Boolean(
-      compactParams.summaryFromLlm ||
-      (overrideBody &&
-        reusable.summaryFromLlm &&
-        (reusable.summary === summaryOverride ||
-          computation.summary === overrideBody ||
-          computation.summary.includes(overrideBody))),
-    );
-    const state: TokenizerThresholdSessionState = {
-      compactedSourceLength: compactParams.messages.length,
-      summarizableCount: computation.summarizableCount,
+    const state = persistCompactionState({
+      stateKey,
+      sourceMessages: compactParams.messages,
+      computation,
       summarizableFingerprint: reusable.summarizableFingerprint,
-      compactedMessages: computation.messages,
-      tokensBefore: computation.tokensBefore,
-      tokensAfter: computation.tokensAfter,
-      summary: computation.summary,
-      summaryFromLlm,
       compactionTriggerCount,
-    };
-    setSessionCompactionState(stateKey, state);
+      summaryFromLlm: inferSummaryFromLlm({
+        summaryFromLlmHint: compactParams.summaryFromLlm,
+        summaryOverride,
+        reusableSummary: reusable.summary,
+        reusableSummaryFromLlm: reusable.summaryFromLlm,
+        computationSummary: computation.summary,
+      }),
+    });
     return toCompactResult({
       state,
       thresholdTokens: params.config.thresholdTokens,
@@ -323,11 +342,11 @@ export function createTokenizerThresholdContextEngine(params: {
         sessionId: assembleParams.sessionId,
         sessionKey: assembleParams.sessionKey,
       });
-      const systemPrompt = resolveCachedSystemPrompt({
+      const systemPrompt = getCachedSystemPrompt({
         sessionId: assembleParams.sessionId,
         sessionKey: assembleParams.sessionKey,
       });
-      const toolsSchemaTokens = resolveCachedToolsSchemaTokens({
+      const toolsSchemaTokens = getCachedToolsSchemaTokens({
         sessionId: assembleParams.sessionId,
         sessionKey: assembleParams.sessionKey,
       });
@@ -371,7 +390,6 @@ export function createTokenizerThresholdContextEngine(params: {
         messages: assembleParams.messages,
         thresholdTokens: params.config.thresholdTokens,
         counter,
-        force: true,
         keepRecentTokens: params.config.keepRecentTokens,
         summaryOverride: resolved.summary,
         systemPrompt,
@@ -380,24 +398,20 @@ export function createTokenizerThresholdContextEngine(params: {
       });
 
       if (computation.compacted) {
-        const resolvedBody = resolved.summary?.trim() ?? "";
-        const state: TokenizerThresholdSessionState = {
-          compactedSourceLength: assembleParams.messages.length,
-          summarizableCount: computation.summarizableCount,
+        persistCompactionState({
+          stateKey,
+          sourceMessages: assembleParams.messages,
+          computation,
           summarizableFingerprint: reusable.summarizableFingerprint,
-          compactedMessages: computation.messages,
-          tokensBefore: computation.tokensBefore,
-          tokensAfter: computation.tokensAfter,
-          summary: computation.summary,
-          // computation.summary may prepend the gate reason; match on body text.
-          summaryFromLlm: Boolean(
-            resolved.summaryFromLlm &&
-            resolvedBody &&
-            (computation.summary === resolvedBody || computation.summary.includes(resolvedBody)),
-          ),
           compactionTriggerCount,
-        };
-        setSessionCompactionState(stateKey, state);
+          // Require the resolved LLM body to actually land in computation.summary.
+          summaryFromLlm: inferSummaryFromLlm({
+            summaryOverride: resolved.summary,
+            reusableSummary: resolved.summary,
+            reusableSummaryFromLlm: Boolean(resolved.summaryFromLlm),
+            computationSummary: computation.summary,
+          }),
+        });
       }
 
       return {
@@ -463,7 +477,6 @@ export function createTokenizerThresholdContextEngine(params: {
               sessionId: compactParams.sessionId,
               sessionKey: compactParams.sessionKey,
               messages,
-              force: compactParams.force ?? true,
               tokenBudget: compactParams.tokenBudget,
               summaryOverride: resolved.summary,
               summaryFromLlm: resolved.summaryFromLlm,

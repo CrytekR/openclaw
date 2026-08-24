@@ -1,6 +1,6 @@
 /**
  * Process-local compaction view owned by the tokenizer-threshold engine.
- * Survives mid-loop assemble/afterTurn without touching the live session file.
+ * Survives mid-loop assemble without touching the live session file.
  */
 import type { AgentMessage } from "openclaw/plugin-sdk/agent-harness-runtime";
 
@@ -15,7 +15,7 @@ export type TokenizerThresholdSessionState = {
   tokensBefore: number;
   tokensAfter: number;
   summary: string;
-  /** True when summary came from runtimeContext.llm rather than extractive text. */
+  /** True when summary came from api.runtime.llm.complete rather than extractive text. */
   summaryFromLlm: boolean;
   /**
    * How many times this session's context engine has triggered compaction.

@@ -2,7 +2,6 @@
  * Engine-owned compaction: native-style summary message + keepRecentTokens tail.
  */
 import type { AgentMessage } from "openclaw/plugin-sdk/agent-harness-runtime";
-import { splitMessagesAtCutPoint } from "./cut-point.js";
 import {
   assembleNativeStyleCompactedMessages,
   type NativeCompactAssembly,
@@ -22,7 +21,6 @@ export function computeTokenizerThresholdCompaction(params: {
   messages: AgentMessage[];
   thresholdTokens: number;
   counter: TokenCounter;
-  force?: boolean;
   keepRecentTokens?: number;
   summaryOverride?: string;
   /** Cached llm_input system prompt; counted toward the threshold gate. */
@@ -61,7 +59,7 @@ export function computeTokenizerThresholdCompaction(params: {
     };
   }
 
-  // force still respects the threshold gate: under-budget prompts stay intact.
+  // Under-budget prompts stay intact.
   if (tokensBefore < params.thresholdTokens) {
     return {
       compacted: false,
@@ -93,18 +91,9 @@ export function computeTokenizerThresholdCompaction(params: {
     tokenizerDegraded: params.counter.isDegraded(),
     countMessageTokens: (messages) => countMessageTokens({ messages, counter: params.counter }),
   });
-  if (!assembled.compacted) {
-    return {
-      ...assembled,
-      tokensBefore,
-      tokensAfter: assembled.tokensAfter + fixedPromptTokens,
-    };
-  }
   return {
     ...assembled,
     tokensBefore,
     tokensAfter: assembled.tokensAfter + fixedPromptTokens,
   };
 }
-
-export { splitMessagesAtCutPoint };

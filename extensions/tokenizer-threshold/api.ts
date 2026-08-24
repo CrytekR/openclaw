@@ -15,13 +15,13 @@ export {
 } from "./src/engine.js";
 export {
   computeTokenizerThresholdCompaction,
-  splitMessagesAtCutPoint,
   type EngineCompactComputation,
 } from "./src/compact-logic.js";
 export {
   findMessageCutPoint,
   findMessageTurnStartIndex,
   findValidMessageCutPoints,
+  splitMessagesAtCutPoint,
   type MessageCutPoint,
   type MessageHistorySplit,
 } from "./src/cut-point.js";
@@ -47,7 +47,6 @@ export {
   createTokenCounter,
   disposeTokenizerWorkers,
   extractMessageText,
-  getLocalTokenCounter,
   type CreateTokenCounterOptions,
   type TokenCounter,
 } from "./src/tokenizer.js";

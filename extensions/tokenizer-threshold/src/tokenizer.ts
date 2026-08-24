@@ -60,17 +60,13 @@ function ensureWorker(params: { pythonPath: string; tokenizerModel: string }): P
 /**
  * Fallback estimate when Python transformers is unavailable.
  * Prefer ~chars/4 over whitespace splits (awful for CJK).
+ * Vitest / TOKENIZER_THRESHOLD_STUB also use this deterministic estimate.
  */
 function estimateTokensFallback(text: string): number {
   if (!text) {
     return 0;
   }
   return Math.max(1, Math.ceil(Array.from(text).length / FALLBACK_CHARS_PER_TOKEN));
-}
-
-/** Vitest / TOKENIZER_THRESHOLD_STUB: same ~chars/4 estimate as the live fallback. */
-function stubCountText(text: string): number {
-  return estimateTokensFallback(text);
 }
 
 /**
@@ -84,7 +80,7 @@ export function createTokenCounter(
 ): TokenCounter {
   if (process.env.VITEST || process.env.TOKENIZER_THRESHOLD_STUB === "1") {
     return {
-      countText: stubCountText,
+      countText: estimateTokensFallback,
       isDegraded: () => false,
     };
   }
@@ -132,11 +128,6 @@ export function createTokenCounter(
       }
     },
   };
-}
-
-/** @deprecated Prefer createTokenCounter(config); kept for call-site clarity in tests. */
-export function getLocalTokenCounter(config: TokenizerThresholdConfig): TokenCounter {
-  return createTokenCounter(config);
 }
 
 /** Best-effort shutdown of cached Python workers (tests / plugin dispose). */

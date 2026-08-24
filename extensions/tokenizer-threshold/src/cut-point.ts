@@ -6,7 +6,7 @@
  *
  * Differences from the session-tree original:
  * - Operates on AgentMessage[] (assemble prompt view), not SessionTreeEntry[]
- * - Token estimates use the plugin's local tiktoken counter (native uses ~chars/4)
+ * - Token estimates use the plugin's local Python tokenizer (native uses ~chars/4)
  * - No session-tree meta entries (compaction/leaf/…); cut points are message roles only
  */
 import type { AgentMessage } from "openclaw/plugin-sdk/agent-harness-runtime";

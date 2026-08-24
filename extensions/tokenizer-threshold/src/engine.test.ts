@@ -1,17 +1,4 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-
-vi.mock("openclaw/plugin-sdk/core", async () => {
-  const actual = await vi.importActual<typeof import("openclaw/plugin-sdk/core")>(
-    "openclaw/plugin-sdk/core",
-  );
-  return {
-    ...actual,
-    delegateCompactionToRuntime: vi.fn(async () => {
-      throw new Error("engine-owned compaction must not delegate to runtime");
-    }),
-  };
-});
-
 import { resolveTokenizerThresholdConfig } from "./config.js";
 import { createTokenizerThresholdContextEngine } from "./engine.js";
 import { COMPACTION_SUMMARY_PREFIX } from "./native-compact-assemble.js";
